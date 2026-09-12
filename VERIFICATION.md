@@ -12,9 +12,9 @@ Maintainer verification on September 12, 2026:
 | Codex desktop / CLI | 26.908.40834 / 0.154.0-alpha.6.2 |
 | Devin CLI / protocol | 3000.10.23 (deb81600) / ACP v1 |
 | Node / MCP SDK | 22.23.1 / 1.30.0 |
-| Model and account | Exact `swe-2-medium`, authenticated Devin Pro |
+| Model and account | Exact `swe-2-medium`; separate `swe-2-max` lifecycle probes; authenticated Devin Pro |
 
-Only macOS runtime support is verified. Linux is experimental; Windows is unsupported. Linux source CI is not evidence of Linux Devin runtime compatibility. High and Max are accepted exact model IDs, but the inference trials below used Medium. Catalog visibility is neither successful inference nor a price guarantee.
+Only macOS runtime support is verified. Linux is experimental; Windows is unsupported. Linux source CI is not evidence of Linux Devin runtime compatibility. The original integration trials used Medium. Max was additionally checked for read-only turn continuity and session contention as described below; High inference remains unverified. Catalog visibility is neither successful inference nor a price guarantee.
 
 ## Real session trials
 
@@ -48,6 +48,20 @@ Additional real Medium probes used the versions above and fresh disposable sessi
 These probes demonstrate embedded-text delivery for the tested sizes and content; they do not establish that a worker will follow every attached reference in a complex assignment. No dropped-resource bug was reproduced, so the embedded-resource format is unchanged. If source use is uncertain, an explicit follow-up can ask the worker to identify a specific fact from the supplied reference before continuing.
 
 Response notes are local audit context, not a worker message channel. Tool and agent guidance now state this explicitly. Instructions or corrections must be sent through a deliberate next-revision `devin_message` after the current turn ends, with partial-work acknowledgment where required. The bridge does not silently add another prompt or retry denied work.
+
+## Max follow-ups and session contention
+
+A reported Max follow-up failed because Devin desktop acquired the session between bridge turns. Read-only inspection found the first bridge turn's `SessionEnd` before terminal completion, followed about a minute later by desktop opening that session and acquiring its lock under a different, earlier-started ACP process. The next bridge revision then received the upstream `session_locked` error. That desktop ACP instance later released the session and exited; the investigation did not operate that client or its jobs.
+
+Separate disposable probes used the unchanged production bridge and exact `swe-2-max`:
+
+| Scenario | Observed result |
+| --- | --- |
+| Immediate follow-ups | Three consecutive turns completed in the same session and retained a conversation-only marker. Each recorded worker PID was absent at terminal completion; no files changed. |
+| Competing client | A separate real ACP client loaded that fixture session. The next bridge revision was blocked at session loading with the same "already open in another process" error. No prompt was submitted and the owning client remained alive. |
+| Explicit recovery | After deliberately closing the fixture's owning client, a new consecutive revision with partial-work acknowledgment completed, recalled the original marker, and changed no files. |
+
+No bridge cleanup race was reproduced, and no shutdown, routing, or automatic-retry change was made. The worker contract and setup guide now explain competing session ownership and explicit recovery. These Max probes qualify this limited lifecycle behavior, not engineering quality, long assignments, or broad equivalence with other models. Exact recovery rules for leftover provider PID files remain unverified; file presence alone is not live-process evidence.
 
 ## Focused regression coverage
 

@@ -142,6 +142,8 @@ Cancel with `devin_cancel` when work should stop. Timeout, cancellation, interru
 
 After a bridge restart, use `devin_list`/`devin_wait` to discover work. No prompt is automatically replayed. If an owner exited, cancellation can reconcile verified surviving processes; uncertain process identity keeps its locks for inspection. A job without a verified ACP session, including a legacy version 0.1 job, cannot be resumed. Resolve its blocker and inspect its state before deliberately assigning further work.
 
+Devin permits only one ACP process to hold a session at a time. Devin desktop or another CLI client can open it between completed bridge turns, causing a follow-up to return `ACP_REMOTE_ERROR` with an "already open in another process" message. Release the session through that owning client, inspect the blocked job, then send an explicit consecutive revision with `acknowledge_partial_work: true`. Repeating the blocked revision returns its existing job. The bridge does not close another client's session or automatically retry the prompt. A leftover Devin PID file alone does not establish that its owner is still running; do not delete it to force a resume.
+
 ## Verification and acceptance
 
 A worker turn ending is not task acceptance. Review the final answer, scope status, changed files, source evidence, blockers, and each check. `task_accepted` remains false. Incomplete evidence or output must not become a clean-success claim.

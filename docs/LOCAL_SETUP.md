@@ -174,6 +174,7 @@ If Codex is bundled in the desktop app, use the executable path reported by the 
 | `WORKSPACE_TRUST_REQUIRED` | Review the exact assignment directory, then use native trust or an explicit caller acknowledgment for that assignment. |
 | `needs_permission` or `needs_input` | Inspect `pending_requests`; approve only an offered allowed check, deny, or answer the bounded requested form with `devin_respond`. |
 | `WORKER_CAPACITY` or `WORKSPACE_BUSY` | Wait for or cancel the owning job; inspect interrupted work before retrying. Do not delete a lock to force concurrent execution. |
+| `ACP_REMOTE_ERROR`: session is already open in another process | Release that session in its owning Devin desktop or CLI client. A completed bridge turn does not prevent another client from opening the same session. Inspect the blocked job, then use an explicit next-revision `devin_message` with partial-work acknowledgment; repeating the same revision returns its existing job. See [session ownership](WORKER_CONTRACT.md#follow-ups-and-recovery). |
 | `ASSIGNMENT_CONFLICT` | The ID/revision names different work. Discover the existing job and use an explicit consecutive follow-up revision. |
 | `PARTIAL_WORK_REVIEW_REQUIRED` | Inspect the previous result and workspace before acknowledging partial work in `devin_message`. |
 | Interrupted, timed-out, or unverified result | Inspect the result, private artifacts, and workspace. Partial changes remain; rerunning a task can repeat them. |
