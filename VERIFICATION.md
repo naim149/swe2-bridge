@@ -1,70 +1,94 @@
 # Verification and current limits
 
-Status: experimental public release. These checks establish observed integration behavior, not exhaustive reliability or a model benchmark. Verification used the real installed Devin CLI, real MCP connections, and disposable Git workspaces. There is no mocked Devin executable or model-test suite.
+Version 0.2 is an experimental local session-worker integration. The checks below used real Devin/SWE-2 calls, disposable Git worktrees, local child processes, and real MCP connections. They establish the observed behavior, not exhaustive reliability or a model benchmark.
 
-## Environment tested
+## Environment
 
 Maintainer verification on September 12, 2026:
 
-| Component | Version or setting |
+| Component | Tested version |
 | --- | --- |
-| Operating system | macOS 26.5.2, Apple Silicon (`arm64`) |
-| Codex desktop / CLI | `26.908.40834` / `0.154.0-alpha.6.2` |
-| Devin CLI | `3000.10.23 (deb81600)` |
-| Node.js / MCP SDK | `22.23.1` / `1.30.0` |
-| Model | `swe-2-medium`, confirmed from actual conversation exports |
-| Account | Authenticated Devin Pro account; each user supplies their own account |
-| Bridge defaults | `accept-edits`, workspace trust enabled |
+| Platform | macOS 26.5.2, Apple Silicon |
+| Codex desktop / CLI | 26.908.40834 / 0.154.0-alpha.6.2 |
+| Devin CLI / protocol | 3000.10.23 (deb81600) / ACP v1 |
+| Node / MCP SDK | 22.23.1 / 1.30.0 |
+| Model and account | Exact `swe-2-medium`; separate `swe-2-max` lifecycle probes; authenticated Devin Pro |
 
-macOS is the tested platform. Linux is explicitly experimental and unverified. Windows is unsupported. Source checks running on Linux CI do not establish Linux runtime support.
+Only macOS runtime support is verified. Linux is experimental; Windows is unsupported. Linux source CI is not evidence of Linux Devin runtime compatibility. The original integration trials used Medium. Max was additionally checked for read-only turn continuity and session contention as described below; High inference remains unverified. Catalog visibility is neither successful inference nor a price guarantee.
 
-## Passed real-environment checks
+## Real session trials
 
-| Scenario | Observed outcome |
+| Scenario | Observed result |
 | --- | --- |
-| Model access and reading | A real SWE-2 task returned the expected fixture contents without editing files. |
-| MCP initialization and discovery | Actual SDK clients connected to the stdio server and discovered the three tools. An invalid directory was rejected before starting a worker. |
-| Editing and acceptance | SWE-2 changed a function from subtraction to addition. Parent checks confirmed positive and negative examples returned the expected results. |
-| Preserve existing work | Uncommitted tracked notes and an untracked user file remained byte-for-byte unchanged. |
-| Git evidence | A real read-only worker ran while the test driver independently made a fixture commit and an index-only change with unchanged working-file contents. Both paths and the HEAD change were reported. This checks evidence collection; it does not attribute those driver changes to SWE-2. |
-| Checkout locking | A competing bridge instance returned `WORKSPACE_BUSY` while another job owned the checkout. |
-| Cancellation | Cancellation and repeated cancellation returned a terminal result; the owned process group was confirmed absent. |
-| Deadline | A one-second deadline returned `timed_out` / `DEADLINE_EXCEEDED`; the process group was absent. |
-| Graceful shutdown and reload | Closing the MCP connection interrupted a task. A fresh bridge read the persisted result, and the process group was absent. |
-| Abrupt shutdown and recovery | After forcibly stopping the bridge with `SIGKILL`, a fresh instance reported the interrupted job and cancelled its identifiable surviving worker. Missing final snapshots are reported as unknown changes. A subsequent job recovered the stale checkout lock and completed its deadline cleanup. Both process groups were absent. |
-| Workspace trust | An untrusted fixture returned `WORKSPACE_UNTRUSTED`. After trusting only that fixture through Devin's normal prompt, the default configuration succeeded. |
-| Shell approval refusal | Under `accept-edits`, a requested shell command required confirmation and was rejected by headless Devin. The bridge returned `blocked` / `PERMISSION_REQUIRED` with no file changes. The bridge did not change permissions. |
-| Installed Codex workflow | A fresh ephemeral Codex CLI invocation loaded the installed skill, called `devin_run` and `devin_wait`, and received the exact SWE-2 Medium result with workspace trust enabled. |
+| Read, image, and question | In `read`/ACP `ask` mode, SWE-2 read the fixture, identified the supplied PNG as red, asked a structured form question, and incorporated the supplied answer. No files changed. |
+| Owned edit and check | SWE-2 changed subtraction to addition in its owned file. The actual declared Node test command passed through the bridge terminal with exit code zero and retained output evidence. |
+| One-time approval | An `approval: "ask"` check became `needs_permission`. A second bridge instance discovered the pending request and approved it once. |
+| Follow-up continuity | A new revision created a new job, loaded the same Devin session, recalled an identifier supplied only in the earlier conversation, added a bounded comment, and passed the declared check again. |
+| Duplicate delivery | Repeating the same assignment/revision returned its existing job. Repeating the follow-up also reused its job. Discovery returned both linked revisions. |
+| Concurrent work | Two SWE-2 jobs ran in independent Git worktrees while a native fixture command produced independent evidence. A competing assignment in the occupied checkout was rejected. Multi-wait returned separate cursors and attention states. |
+| Preserve unrelated work | Dirty tracked notes and a pre-existing untracked file remained byte-for-byte unchanged. Git scope evidence identified only the assigned implementation file. |
+| Undeclared command | In the first combined trial, the model prepended `cd` to a declared command. Exact matching rejected it; approval was unavailable. The prompt now explicitly requires copying commands without wrappers. The repeated combined trial passed. No permissive fallback was added. |
+| Abrupt owner crash | The bridge owner was killed with SIGKILL after a real declared check had started. A fresh instance reported unknown post-interruption changes, deduplicated the original assignment, and kept the checkout locked while the detached check survived. |
+| Orphan cancellation and resume | Identity-checked cancellation stopped that surviving check group. An unacknowledged follow-up was rejected. An explicitly acknowledged follow-up loaded the same Devin session, read the partial state, and completed without replaying the cancelled command. Its delayed write never occurred. |
+| ACP transport behavior | Direct real ACP probes verified exact model metadata, load-session replay, filesystem callbacks, command allow/deny, terminal interception with actual cwd, image input, form elicitation, and cancellation during a pending permission request. |
 
-Initial disposable read/edit probes explicitly skipped trust for those fixtures; the direct read probe used Devin's `auto` mode. Installed-plugin and subsequent default-policy checks used `accept-edits` with trust enabled after the specific fixture was trusted. No global trust setting was changed.
+Disposable fixtures used explicit, directory-specific trust acknowledgment. ACP does not enforce the CLI print-mode trust gate; the bridge separately checks the native exact-directory trust registry or records caller acknowledgment. No global trust or permission setting was changed.
 
-## Public installation checks
+## Text attachment and response-note investigation
 
-The repository installer was exercised using real Codex plugin commands and isolated Codex configuration directories. This avoids changing the maintainer's normal installation during the checks.
+Additional real Medium probes used the versions above and fresh disposable sessions. The text probes called the production `normalizeAssignment`, `prepareContent`, and `AcpClient` directly. Each source attachment was deleted after content preparation and before submission; the read callback rejected file access. No tool calls or file reads were observed.
 
-- First install and same-path reinstall succeeded; unchanged contents retained the same generated version.
-- A checkout in a path containing spaces started without dependencies, reported the missing prerequisite, then passed dependency installation, plugin installation, and actual MCP discovery.
-- The source launcher also started with a narrow macOS GUI-style `PATH`.
-- Codex resolved relative plugin paths against its installed cache correctly.
-- Removal left no bridge MCP server in the isolated configuration.
-- Dry-run, missing-CLI failure, and removal/reinstallation from a relocated checkout behaved as documented.
+| Probe | Observed result |
+| --- | --- |
+| Small UTF-8 embedded resource | The worker returned a random marker supplied only inside the attachment, plus exact accented Latin and Arabic text. The session advertised `embeddedContext: true`. |
+| Plain-text control | A separate session received a different random marker through an ordinary text block and returned it and the Unicode text exactly. This control did not change production serialization. |
+| Document-sized embedded resource | The 14,439-byte worker contract was expanded to 14,600 bytes with random markers near its start, middle, and end, plus Unicode. The worker returned all markers and the Unicode exactly and correctly summarized a requested contract clause. |
+| Denial-note visibility | A real `SessionManager` job requested an exact declared check with one-time approval. Denial included a random marker only in `devin_respond.note`. The marker was persisted locally, but the worker reported only the generic rejection and no separate note. The check did not run and no files changed. |
 
-These checks exercised fresh directories on the same Mac, not a second physical machine. A different checkout path requires removing the old marketplace registration before registering the replacement; see the [relocation procedure](docs/LOCAL_SETUP.md).
+These probes demonstrate embedded-text delivery for the tested sizes and content; they do not establish that a worker will follow every attached reference in a complex assignment. No dropped-resource bug was reproduced, so the embedded-resource format is unchanged. If source use is uncertain, an explicit follow-up can ask the worker to identify a specific fact from the supplied reference before continuing.
 
-## Findings addressed during verification
+Response notes are local audit context, not a worker message channel. Tool and agent guidance now state this explicitly. Instructions or corrections must be sent through a deliberate next-revision `devin_message` after the current turn ends, with partial-work acknowledgment where required. The bridge does not silently add another prompt or retry denied work.
 
-A deadline check exposed a transient macOS process-group cleanup error. The runner now suppresses that error only after confirming that the group has disappeared; unresolved cleanup retains the lock. The affected real deadline/shutdown checks passed afterward. Apple's [process-group signaling implementation](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/kern/kern_sig.c) supports the suspected zombie-group explanation; the transient process state itself was not captured.
+## Max follow-ups and session contention
 
-Review also found that parseable but incomplete exports and dirty-file-only comparisons could overstate completion evidence. The bridge now requires a recognizable ATIF-v1 export ending in an agent answer and snapshots the index and committed tree. The live shell check confirmed why this matters: Devin can exit zero after refusing a permission prompt, without producing a final answer. That outcome is now reported as a permission block.
+A reported Max follow-up failed because Devin desktop acquired the session between bridge turns. Read-only inspection found the first bridge turn's `SessionEnd` before terminal completion, followed about a minute later by desktop opening that session and acquiring its lock under a different, earlier-started ACP process. The next bridge revision then received the upstream `session_locked` error. That desktop ACP instance later released the session and exited; the investigation did not operate that client or its jobs.
 
-Node/launcher syntax, plugin metadata, skill validation, and independent code review were also checked. CI performs dependency installation, syntax checks, and JSON parsing without Devin authentication or inference. CI success alone is not an end-to-end test.
+Separate disposable probes used the unchanged production bridge and exact `swe-2-max`:
 
-## Further verification worth contributing
+| Scenario | Observed result |
+| --- | --- |
+| Immediate follow-ups | Three consecutive turns completed in the same session and retained a conversation-only marker. Each recorded worker PID was absent at terminal completion; no files changed. |
+| Competing client | A separate real ACP client loaded that fixture session. The next bridge revision was blocked at session loading with the same "already open in another process" error. No prompt was submitted and the owning client remained alive. |
+| Explicit recovery | After deliberately closing the fixture's owning client, a new consecutive revision with partial-work acknowledgment completed, recalled the original marker, and changed no files. |
 
-Before broader reliability claims, obtain evidence for additional macOS installations, Linux, longer engineering tasks, simultaneous native-agent coordination, model/account failures, network interruptions, large repositories, and disk failures. Shell approvals cannot be granted through this headless bridge; workflows requiring them need an appropriate explicit permission decision outside the bridge.
+No bridge cleanup race was reproduced, and no shutdown, routing, or automatic-retry change was made. The worker contract and setup guide now explain competing session ownership and explicit recovery. These Max probes qualify this limited lifecycle behavior, not engineering quality, long assignments, or broad equivalence with other models. Exact recovery rules for leftover provider PID files remain unverified; file presence alone is not live-process evidence.
 
-A process exit is separate from accepting the generated work. Snapshot comparisons can include concurrent edits; ownership instructions are not filesystem isolation. Non-Git workspaces have no Git change attribution. One job runs at a time per bridge instance, and locks only coordinate bridges sharing the same state directory. Uncertain process ownership remains a conservative block.
+## Focused regression coverage
 
-Raw job records, prompts, exports, logs, and Git snapshots remain private under the local state directory. Maintainer evidence summaries are retained in ignored local files. Do not publish those raw artifacts as test fixtures; submit a sanitized reproduction with versions, expected/actual behavior, and the relevant result instead.
+`npm test` runs 30 tests using real files, Git repositories, and local child processes. It needs no Devin installation, account, mocked Devin executable, or model inference. Coverage includes:
 
-SWE-2 followed the bounded read/edit assignments successfully. These tasks are too small to rank it against other models or establish performance on complex projects.
+- Exact-model validation, ownership paths, symlink/hard-link escape rejection, check references, attachment frame limits, file limits, and Git evidence across dirty/index/committed states.
+- Durable command ownership before an execution gate opens, failed persistence, owner death before the gate, check deadlines, cancellation, descendant cleanup, release/session isolation, and a 32-start limit.
+- Bounded UTF-8 output, lossy/truncated evidence remaining unknown, private artifact hashes, and aggregate retention limits.
+- Duplicate delivery across instances and restart, conflicting intent, concurrent native evidence recording, executor/cwd/source mismatch rejection, interrupted finalization, and locks retained for surviving check processes.
+- Real check output remaining historical evidence when later edits make it stale, and unknown source binding when a check itself changes the observed workspace.
+
+Source checks cover runtime/installer syntax and plugin metadata. CI installs pinned dependencies without lifecycle scripts, runs source/regression checks, and validates JSON; it performs no inference. Independent review found and resolved premature completion persistence, orphan check ownership, cancellation versus file-write races, unbounded cached tool payloads, and concurrent evidence overwrite.
+
+## Installation evidence
+
+The previous public version was tested with real Codex plugin installation/reinstallation/removal in isolated configuration directories, a checkout path containing spaces, a narrow GUI-style PATH, and a fresh installed Codex invocation. Those historical results remain available in the [version 0.1 verification record](https://github.com/naim149/swe2-bridge/blob/e87e2c5201688ae5748126f4a4013e5f7fa3c20f/VERIFICATION.md).
+
+The v0.2 prerequisite doctor and installer dry-run pass. Actual installation and reinstall in an isolated Codex configuration succeeded. An MCP client connected to the installed cache, discovered all nine tools, passed real no-inference preflight, and rejected an invalid model alias.
+
+A fresh ephemeral Codex session loaded the personal plugin, invoked its actual run/wait tools, and received a completed exact-Medium result: one owned file edit, a real passing Node check, and `source_binding: matches_final_observed_state`. Parent inspection confirmed the persisted evidence. Codex's normal automatic approval review authorized that explicitly scoped fixture invocation. An earlier read-only/never-approval invocation was blocked before job creation by the host; the bridge did not bypass host approvals. A mistyped source hash was also rejected before creating a job.
+
+## Remaining limits
+
+Long engineering assignments, a second physical installation, Linux runtime, quota/auth expiry, network interruption, disk exhaustion, and escaped/daemonized subprocesses are not fully qualified. The happy-path trial uses two external workers; it does not establish sustained three-worker throughput or application-specific build/device coordination. A representative project assignment remains necessary before adopting a broader worker policy.
+
+Delegated filesystem and terminal callbacks enforce their specific contracts. Built-in search, authorized shell programs, ignored files, external paths, transient reverted changes, and some submodule contents remain outside complete observation or containment. This is not an OS sandbox. Check commands run with the local account's permissions; callers must authorize their effects deliberately.
+
+Events, text, attachments, and artifacts are bounded. Follow `next_cursor`, inspect gaps/truncation, and treat unknown evidence as unknown. Native check records are caller-reported evidence with declared ownership and optional source provenance, not independent attestations. Every result retains `task_accepted: false` for the Lead's review.
+
+Raw prompts, records, form answers, outputs, diffs, and protocol probes remain private. Share only sanitized reproduction steps and observed outcomes. SWE-2 handled the bounded engineering and image tasks successfully; these trials do not rank it against other models or predict complex-project quality.

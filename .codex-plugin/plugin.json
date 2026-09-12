@@ -1,6 +1,6 @@
 {
   "name": "swe2-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Use the installed Devin CLI as an additional worker in Codex.",
   "author": {
     "name": "Naim",
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Devin CLI",
     "shortDescription": "Delegate tasks through the installed Devin CLI",
-    "longDescription": "Run, collect, and cancel Devin CLI worker tasks from Codex using the existing orchestration and model-selection rules.",
+    "longDescription": "Delegate structured assignments to Devin CLI sessions, follow progress, respond to questions, and review verification evidence using existing orchestration and model-selection rules.",
     "developerName": "Naim",
     "category": "Developer Tools",
     "capabilities": [

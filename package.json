@@ -1,6 +1,6 @@
 {
   "name": "devin-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local MCP tools for delegated engineering work through the installed Devin CLI.",
   "private": true,
   "license": "MIT",
@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "check": "node --check src/server.mjs && node --check src/runner.mjs && node --check scripts/environment.mjs && node --check scripts/doctor.mjs && node --check scripts/install-local.mjs && sh -n scripts/launch-devin-bridge",
+    "check": "node --check src/server.mjs && node --check src/session-manager.mjs && node --check src/assignment.mjs && node --check src/acp-client.mjs && node --check src/check-executor.mjs && node --check src/runner.mjs && node --check scripts/environment.mjs && node --check scripts/doctor.mjs && node --check scripts/install-local.mjs && sh -n scripts/launch-devin-bridge",
+    "test": "node --test test/*.test.mjs",
     "doctor": "node scripts/doctor.mjs",
     "install:local": "node scripts/install-local.mjs"
   },

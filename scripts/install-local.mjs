@@ -12,7 +12,7 @@ const requiredEntries = ['src', 'skills', '.codex-plugin', '.mcp.json', 'package
 const optionalEntries = ['README.md', 'LICENSE', 'CONTRIBUTING.md', 'SECURITY.md', 'PLAN.md', 'VERIFICATION.md', 'docs'];
 const configurationKeys = [
   'DEVIN_CLI_PATH', 'DEVIN_BRIDGE_MODEL', 'DEVIN_BRIDGE_STATE_DIR',
-  'DEVIN_BRIDGE_PERMISSION_MODE', 'DEVIN_BRIDGE_RESPECT_WORKSPACE_TRUST',
+  'DEVIN_BRIDGE_MAX_WORKERS',
 ];
 
 async function readJson(file) { return JSON.parse(await fs.readFile(file, 'utf8')); }
@@ -87,9 +87,8 @@ async function stagePlugin(environment) {
     }
     // Resolve the executable even if its explicit override used a relative path.
     server.env.DEVIN_CLI_PATH = environment.paths.devin;
-    if (!['true', 'false'].includes(server.env.DEVIN_BRIDGE_RESPECT_WORKSPACE_TRUST)) {
-      throw new Error('DEVIN_BRIDGE_RESPECT_WORKSPACE_TRUST must be true or false.');
-    }
+    if (!['swe-2-medium', 'swe-2-high', 'swe-2-max'].includes(server.env.DEVIN_BRIDGE_MODEL)) throw new Error('Select an exact SWE-2 model.');
+    if (!/^[1-3]$/.test(server.env.DEVIN_BRIDGE_MAX_WORKERS || '3')) throw new Error('DEVIN_BRIDGE_MAX_WORKERS must be from 1 to 3.');
     await writeJson(path.join(temporary, '.mcp.json'), mcp);
     await writeJson(path.join(temporary, '.codex-plugin', 'plugin.json'), manifest);
     manifest.version = `${manifest.version}+codex.${await hashTree(temporary)}`;
@@ -130,7 +129,7 @@ async function runCodex(executable, args) {
 try {
   const options = parseArguments(process.argv.slice(2), { installer: true });
   if (options.help) {
-    console.log('Usage: npm run install:local -- [--dry-run] [--experimental-linux]\nStage an allowlisted runtime under .local/marketplace, then install it with the Codex CLI. Rerun to update.\nOptional environment: CODEX_CLI_PATH, DEVIN_CLI_PATH, DEVIN_BRIDGE_MODEL, DEVIN_BRIDGE_STATE_DIR, DEVIN_BRIDGE_PERMISSION_MODE, DEVIN_BRIDGE_RESPECT_WORKSPACE_TRUST.');
+    console.log('Usage: npm run install:local -- [--dry-run] [--experimental-linux]\nStage an allowlisted runtime under .local/marketplace, then install it with the Codex CLI. Rerun to update.\nOptional environment: CODEX_CLI_PATH, DEVIN_CLI_PATH, DEVIN_BRIDGE_MODEL, DEVIN_BRIDGE_STATE_DIR, DEVIN_BRIDGE_MAX_WORKERS.');
   } else {
     const environment = await inspectEnvironment(options);
     printEnvironment(environment);
