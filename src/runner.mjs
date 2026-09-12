@@ -13,23 +13,23 @@ const LOG_LIMIT = 8 * 1024 * 1024;
 const TAIL_LIMIT = 16000;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function fault(code, message, state = 'blocked') {
+export function fault(code, message, state = 'blocked') {
   return Object.assign(new Error(message), { code, state, retryable: false });
 }
 
-async function jsonFile(file, value) {
+export async function jsonFile(file, value) {
   const temporary = `${file}.${randomUUID()}.tmp`;
   await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await fs.rename(temporary, file);
 }
 
 async function readJson(file) { return JSON.parse(await fs.readFile(file, 'utf8')); }
-function alive(pid) {
+export function alive(pid) {
   if (!Number.isSafeInteger(pid) || pid === 0) return false;
   try { process.kill(pid, 0); return true; }
   catch (error) { return error.code !== 'ESRCH'; }
 }
-async function signalGroup(pid, signal) {
+export async function signalGroup(pid, signal) {
   if (!Number.isSafeInteger(pid) || pid <= 1) return;
   try { process.kill(-pid, signal); }
   catch (error) {
@@ -40,7 +40,7 @@ async function signalGroup(pid, signal) {
     throw error;
   }
 }
-async function groupGone(pid, milliseconds) {
+export async function groupGone(pid, milliseconds) {
   const until = Date.now() + milliseconds;
   while (alive(-pid) && Date.now() < until) await delay(50);
   return !alive(-pid);
@@ -71,7 +71,7 @@ export async function resolveDevinPath() {
   throw fault('CLI_NOT_FOUND', override ? `DEVIN_CLI_PATH is not an executable: ${override}` : 'Install Devin CLI or set DEVIN_CLI_PATH.');
 }
 
-function childEnvironment() {
+export function childEnvironment() {
   const env = {};
   for (const key of ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'LC_ALL', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME']) {
     if (process.env[key] !== undefined) env[key] = process.env[key];
@@ -79,7 +79,7 @@ function childEnvironment() {
   return { ...env, TERM: 'dumb', NO_COLOR: '1' };
 }
 
-async function repositoryRoot(cwd) {
+export async function repositoryRoot(cwd) {
   try {
     const root = (await exec('git', ['rev-parse', '--show-toplevel'], { cwd, timeout: 10000, env: childEnvironment() })).stdout.trim();
     return await fs.realpath(root);
@@ -89,7 +89,7 @@ async function repositoryRoot(cwd) {
   }
 }
 
-async function gitSnapshot(cwd) {
+export async function gitSnapshot(cwd) {
   const options = { cwd, timeout: 10000, maxBuffer: 4 * 1024 * 1024, env: childEnvironment() };
   const root = await repositoryRoot(cwd);
   if (!root) return { repository: null, files: {}, head: null, index: {}, tree: {}, status: '', diff: '', staged_diff: '' };
@@ -141,7 +141,7 @@ async function gitSnapshot(cwd) {
   return { repository: root, files, head, index, tree, status: status.stdout, diff: diff.stdout, staged_diff: staged.stdout };
 }
 
-function snapshotEvidence(snapshot) {
+export function snapshotEvidence(snapshot) {
   return { repository: snapshot.repository, files: snapshot.files, head: snapshot.head, index: snapshot.index, tree: snapshot.tree };
 }
 
@@ -312,7 +312,13 @@ export class JobManager {
           let owner;
           try { owner = await readJson(path.join(lock, 'owner.json')); }
           catch { throw fault('WORKSPACE_BUSY', 'Another bridge is acquiring this checkout, or its lock needs inspection.'); }
-          if (alive(owner.runner_pid) || (owner.pid && alive(-owner.pid))) {
+          let ownedTerminals = [];
+          if (/^[0-9a-f-]{36}$/.test(owner.job_id || '')) {
+            try { ownedTerminals = (await readJson(path.join(this.root, 'jobs', owner.job_id, 'job.json'))).active_terminals || []; }
+            catch (error) { if (error.code !== 'ENOENT') throw fault('WORKSPACE_BUSY', 'Cannot verify the previous worker’s command ownership; its lock is retained.'); }
+          }
+          if (alive(owner.runner_pid) || (owner.pid && alive(-owner.pid)) ||
+              (owner.pids || []).some(pid => alive(-pid)) || ownedTerminals.some(item => item.pid && alive(-item.pid))) {
             throw fault('WORKSPACE_BUSY', `Checkout held by job ${owner.job_id}. Wait for or cancel that job before writing here.`);
           }
           await fs.rm(lock, { recursive: true });

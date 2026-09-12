@@ -54,7 +54,7 @@ devin auth login
 
 An interactive browser, account-choice, Keychain, or approval prompt may require the user. Pause only the dependent step, describe the prompt, and resume after it is completed. Never read or print credential files, request a password/token in chat, or impersonate the user's account choice. Do not purchase account access or silently choose another model.
 
-The default model is `swe-2-medium`. Check the exact model requested by the user against the live account catalog. Authentication and catalog visibility establish prerequisites; they are not proof of a successful model invocation.
+Accept only `swe-2-medium`, `swe-2-high`, or `swe-2-max`; the default is `swe-2-medium`. Check the user's exact selection against the live account catalog. Authentication and catalog visibility establish prerequisites; they are not proof of a successful model invocation.
 
 ## 4. Install the local plugin
 
@@ -78,26 +78,30 @@ If moving an existing `swe2-bridge-local` installation to this checkout, stop ac
 
 ## 5. Verify discovery in a fresh task
 
-Start a fresh Codex task/session after installation if the user's request includes doing so. Otherwise tell the user to open a fresh task; do not create an unsolicited persistent task. Verify that the installed skill and the tools `devin_run`, `devin_wait`, and `devin_cancel` are discoverable. Prefixes in the tool names may depend on Codex's MCP namespace.
+Start a fresh Codex task/session after installation if the user's request includes doing so. Otherwise tell the user to open a fresh task; do not create an unsolicited persistent task. Verify the `devin` skill and all nine tools: `devin_preflight`, `devin_run`, `devin_message`, `devin_wait`, `devin_wait_many`, `devin_list`, `devin_respond`, `devin_cancel`, and `devin_record_check`. Prefixes may depend on Codex's MCP namespace.
 
-Discovery is separate from inference. If the user asked only for setup, stop verification here and report that a real model task has not been run.
+Discovery is separate from inference. `devin_preflight` can inspect a bounded assignment without a model task, including exact model catalog visibility, source assumptions, trust, and attachment readiness. If the user asked only for setup, finish with discovery/preflight and report that real inference has not been checked.
 
 ## 6. Run a bounded real check when authorized
 
-If the user authorized real testing, follow the disposable fixture procedure in [LOCAL_SETUP.md](LOCAL_SETUP.md). Use no private project data, honor Devin's workspace trust, and retain normal permission settings. A directory created and reviewed for this check can be trusted specifically through Devin's normal flow; do not bypass trust globally.
+If the user authorized real testing, follow the disposable fixture procedure in [LOCAL_SETUP.md](LOCAL_SETUP.md) and the [worker contract](WORKER_CONTRACT.md). Use no private project data. Establish trust for the exact directory through native trust or an explicit assignment acknowledgment after review; do not change global settings.
+
+Codex host permission for an MCP invocation is separate from Devin's scoped check decisions. Use the host's normal approval controls for the authorized task. An unattended Codex invocation with a required approval and policy `never` stops before a job exists; `codex exec --approve-for-me` can route an authorized fixture invocation through normal automatic review.
 
 Call the real tools once per intended task:
 
-1. `devin_run` with an absolute fixture path, explicit model, bounded objective, constraints, acceptance criteria, and short deadline.
-2. Save the `job_id`; collect progress with `devin_wait` in waits of at most 30 seconds. Continue useful independent work between waits.
-3. Use `devin_cancel` when the test should stop. Cancellation preserves partial changes.
-4. Check the final answer and workspace independently. A terminal process status does not establish task acceptance.
+1. Create a structured assignment with a stable `assignment_id`, revision 1, absolute fixture path, exact model, execution profile, ownership/check policy, acceptance criteria, and short deadline.
+2. Run `devin_preflight`, then use the same ready assignment with `devin_run`. Save its `job_id`; never change the identity merely to force a retry.
+3. Collect progress with `devin_wait` or `devin_wait_many` in waits of at most 30 seconds. Pass each job's returned `next_cursor` back as `after_cursor` and inspect cursor gaps/truncation.
+4. Respond to permitted attention requests with `devin_respond`. Undeclared commands require an amended assignment or native handoff; form answers must match the requested fields.
+5. Use `devin_cancel` when work should stop. Inspect partial changes before an explicit `devin_message` follow-up. A follow-up returns a new job ID in the same assignment/session at the next revision.
+6. Check the answer, workspace, and verification independently. Record native checks with `devin_record_check` only after they actually ran; include the actual cwd and recorded after-HEAD as `source_sha` when known. Omitted source SHA leaves source provenance unknown, and the record never proves the bridge independently executed the check.
 
-On authentication, model access, trust, or permission errors, report the cause and stop the dependent test. Do not silently resubmit a mutating task or change models/permissions. On timeout, interruption, or uncertain completion, inspect the existing job and partial changes before deciding whether a retry is safe.
+On authentication, model access, or trust errors, report the cause and stop the dependent test. Do not silently resubmit a mutating task or change models/permissions. Use `devin_list` to recover existing work. After timeout, interruption, or uncertain completion, inspect the job and workspace before setting `acknowledge_partial_work: true` on a deliberate next revision.
 
-In the default `accept-edits` mode, shell, build, and test commands can require approval that cannot be granted through these headless tools. Do not report worker verification as performed when a command was blocked, even if the CLI process exited successfully.
+The Lead counts native and external workers against its existing budget; the external shared pool has its own maximum of three. Use independent checkouts for concurrent jobs and coordinate named resources. `owned_paths` restrict delegated writes, while `edit_check` permits exact declared shell checks. These controls do not form an OS sandbox or prove that built-in CLI search obeys the bridge's read handlers.
 
-Do not write a mock test suite as a substitute for checking the actual integration. Run additional real scenarios only when they address changed behavior or a specific unresolved concern.
+Run `npm run check` and `npm test` for local source/regression verification; they do not submit inference. These checks complement real integration evidence. Run additional live scenarios when they address changed behavior or a specific unresolved concern, and state which results are still pending.
 
 ## 7. Report the result
 

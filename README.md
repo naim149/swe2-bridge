@@ -1,14 +1,14 @@
 # SWE2 bridge for Codex
 
-Use your installed Devin CLI as an additional worker in Codex. This experimental plugin provides a capability skill and three MCP tools: start a task, collect its result, and cancel it.
+Use your installed Devin CLI as an additional worker in Codex. Version 0.2 adds persistent assignments, follow-ups in the same Devin session, structured permissions, declared checks, and a shared pool of up to three independent workers.
 
 Your existing task, role, and model-selection rules choose when to use Devin alongside native Codex agents. The plugin adds no routing priorities and does not add an entry to Codex's native model picker.
 
-**Status:** working proof of concept, tested on macOS with real Devin/SWE-2 calls. Linux is experimental and unverified. Windows is unsupported. See [verification and known limits](VERIFICATION.md).
+**Status:** experimental. Version 0.2 has real macOS session, edit/check, image, follow-up, and crash-recovery evidence. Linux remains experimental and Windows is unsupported. See [verification](VERIFICATION.md) for tested behavior and qualification limits.
 
 ## How it runs
 
-Codex starts a local Node.js MCP server over stdio. That server starts your local Devin CLI in the working directory you provide. Devin uses your authenticated account for remote model inference.
+Codex starts a local Node.js MCP server over stdio. The bridge drives your local Devin CLI through its Agent Client Protocol (ACP), and Devin uses your authenticated account for remote model inference.
 
 There is no central bridge service to host, listening HTTP port, or account managed by this project. Each person installs and runs their own copy. Publishing this repository shares the source and setup process; it does not publish the plugin to the official Codex directory or create a universal one-click installation link.
 
@@ -34,34 +34,44 @@ Resolve any prerequisite reported by `doctor`, then rerun it. These setup comman
 
 - [Full local setup, configuration, updates, and troubleshooting](docs/LOCAL_SETUP.md)
 - [Setup guide for an agent](docs/AGENT_SETUP.md)
+- [Worker contract and integration example](docs/WORKER_CONTRACT.md)
 
 ## Tools
 
 | Tool | Purpose |
 | --- | --- |
-| `devin_run` | Start a task with an absolute `cwd`, optional `model`, `scope`, and `timeout_seconds`. Returns a job ID. The deadline defaults to 900 seconds; range 1–3600. |
-| `devin_wait` | Read a job by `job_id`. `wait_seconds` defaults to 10; range 0–30. Zero returns an immediate snapshot. |
+| `devin_preflight` | Check a structured assignment and prerequisites without inference. |
+| `devin_run` | Start an assignment, or return its existing job for the same identity and revision. |
+| `devin_message` | Create the next revision as a new job in the same Devin session. |
+| `devin_wait` / `devin_wait_many` | Collect progress, attention requests, and results using per-job cursors. |
+| `devin_list` | Discover persisted jobs and recover assignment identities. |
+| `devin_respond` | Approve an allowed declared check once, deny a request, or answer a requested form. |
 | `devin_cancel` | Stop a job. Changes already made remain in the workspace. |
+| `devin_record_check` | Attach caller-reported evidence from a native or other authorized executor. |
 
-The default model is the explicit identifier `swe-2-medium`. A caller can pass another model available to their Devin account. A result includes the requested model and the model identity reported by Devin, when available.
+The supported model IDs are exactly `swe-2-medium` (default), `swe-2-high`, and `swe-2-max`. The selected model must be available to your Devin account; aliases and silent fallback are not accepted.
 
-For example, ask Codex:
+Assignments use one of three execution profiles:
 
-> Use the Devin worker to inspect the parser in this project. Read only; identify why empty input fails and report the relevant files. Keep the task within this checkout and do not run commands or edit files.
+| Profile | Authorized work |
+| --- | --- |
+| `read` | Investigation; delegated writes and shell checks are denied. |
+| `edit` | Edits to explicit `owned_paths`; checks are handed to a native executor. |
+| `edit_check` | Owned edits plus exact declared checks assigned to Devin, with command and working directory enforced. |
 
-Task scope is an instruction to the worker, **not a filesystem sandbox**. Devin runs with its configured permissions and the OS access of the user who starts Codex. Review the result and changed files before accepting the work. A completed process is not proof that its output is correct.
+The bridge enforces delegated filesystem writes and check permissions, but it is **not an OS sandbox**. Other CLI tools, approved shell commands, and Git's evidence gaps limit isolation and observation. Review the [worker contract](docs/WORKER_CONTRACT.md) before assigning work.
 
-Each bridge instance runs one job at a time. Checkout locks coordinate bridge instances that share a state directory; native agents and other programs can still edit the same checkout. Coordinate file ownership or use separate worktrees. Non-Git workspaces have no Git change evidence.
+The shared external pool allows up to three jobs in independent checkouts. The Lead also counts native and external workers against the caller's existing budget and coordinates named resources. Stable assignment IDs and revisions prevent a repeated request from blindly rerunning the same work.
 
 ## Permissions and private data
 
-The default Devin permission mode is `accept-edits`, with workspace trust respected. Authentication, model access, workspace trust, and command approvals remain Devin requirements. Shell, build, and test commands can require approval that cannot be granted through these headless tools; the task then reports a block. The bridge does not silently change models or permissions to get past it.
+Trust is established for the specific assignment directory, using an existing native trust record or an explicit caller acknowledgment. Profiles determine execution policy; no global trust or permission setting is changed. Permission and form questions appear as attention requests. Only declared, allowed checks can be approved through the bridge.
 
-Job prompts, logs, conversation exports, and Git snapshots are stored locally under `~/.local/share/devin-bridge` by default. They can contain source code and sensitive data. Keep them out of public issues and commits. Read [SECURITY.md](SECURITY.md) for the trust boundary and reporting guidance.
+Job prompts, session records, logs, and Git snapshots are stored locally under `~/.local/share/devin-bridge` by default. They can contain source code and sensitive data. Keep them out of public issues and commits. Read [SECURITY.md](SECURITY.md) for the trust boundary and reporting guidance.
 
 ## Verification and contributions
 
-The initial macOS checks used the real CLI and model: read/edit tasks, preservation of existing work, competing checkout locks, cancellation, deadlines, shutdown/reload, workspace trust, and a fresh Codex invocation. [VERIFICATION.md](VERIFICATION.md) records the tested versions, results, and remaining gaps. These small tasks establish integration behavior, not a model benchmark or a guarantee for arbitrary projects.
+`npm run check` and `npm test` run local source and regression checks without model inference. Real acceptance checks use disposable workspaces and the installed CLI. [VERIFICATION.md](VERIFICATION.md) records versions, observed results, and remaining gaps; it is not a model benchmark or a guarantee for arbitrary projects.
 
 Contributions are welcome, especially reproducible bug reports, installation portability, and results from bounded real-environment checks. Start with [CONTRIBUTING.md](CONTRIBUTING.md). The project is licensed under [MIT](LICENSE).
 

@@ -1,18 +1,22 @@
 # Design and scope
 
-SWE2 Bridge adds the installed Devin CLI as another worker capability in Codex's existing orchestration graph. Existing role, task, and model-selection rules remain authoritative. The bridge supplies run, wait, and cancel operations; Devin supplies the agent runtime.
+SWE2 Bridge adds the installed Devin CLI as another worker capability in Codex's existing orchestration graph. Existing role, task, and model-selection rules remain authoritative. Version 0.2 supplies durable assignment sessions, bounded progress collection, follow-ups, permissions/questions, and verification evidence. Devin supplies the agent runtime.
 
 ```text
 Codex orchestrator
   ├─ main task
   ├─ native agents
-  └─ Devin MCP tools → local Devin CLI → selected Devin model
+  └─ Devin MCP tools → local ACP session → exact selected SWE-2 model
 ```
 
-The Node MCP server uses stdio. It launches a local process with an explicit working directory and argument array, records job evidence, applies a deadline, and coordinates other bridge instances through checkout locks. The default model is `swe-2-medium`; callers can select another installed Devin model explicitly. The default Devin policy accepts file edits and respects workspace trust.
+The Node MCP server uses stdio. Its session manager persists assignment identity before inference, starts or resumes an ACP session, collects bounded events, applies a deadline, and coordinates bridge instances through checkout/resource locks and a shared external pool of up to three. The Lead also counts native and external workers under the caller's existing budget.
 
-Jobs preserve evidence of the initial and final workspace, including dirty files, index entries, and committed Git trees. A successful process exit also requires a recognizable conversation export ending in an agent answer. Task acceptance remains the caller's decision. Ownership scope is an instruction to Devin, not an operating-system sandbox.
+The only accepted model IDs are `swe-2-medium`, `swe-2-high`, and `swe-2-max`; there is no alias or silent fallback. Assignment profiles are `read`, `edit`, and `edit_check`. Delegated writes are checked against explicit owned paths, and client terminal handlers enforce declared check commands and actual working directories. Trust is inherited from an exact native directory record or explicitly acknowledged by the caller for the assignment. These controls are not an OS sandbox and do not cover all built-in CLI tools.
+
+Repeating an assignment ID/revision with identical intent returns its recorded job instead of replaying a prompt. A deliberate follow-up uses the next revision and returns a new job ID in the same Devin session. Interrupted or incomplete work requires the caller to inspect and acknowledge partial changes. Permission and bounded form questions use explicit responses; undeclared commands need an amended assignment or native handoff.
+
+Results distinguish model completion, observed scope changes, check evidence, missing information, and task acceptance. Git worktree/index/HEAD evidence has known gaps, and event/output limits are reported. Native check evidence is caller-reported rather than independently executed by the bridge. `task_accepted` remains false for the caller to decide.
 
 This is an experimental, locally installed project. macOS has real integration evidence; Linux remains unverified and Windows is unsupported. The public repository provides source, local installation, agent setup instructions, and a contribution path. It does not operate a hosted service or represent an official OpenAI or Cognition product.
 
-See [local setup](docs/LOCAL_SETUP.md), [agent setup](docs/AGENT_SETUP.md), and [verification](VERIFICATION.md). Future contributions should address concrete observed behavior: additional platforms, permission-gated workflows, abrupt interruption recovery, and substantial engineering tasks. Multiple simultaneous jobs per bridge instance, automatic replay or model fallback, and a native Codex model-picker entry are outside the current scope.
+See [local setup](docs/LOCAL_SETUP.md), [agent setup](docs/AGENT_SETUP.md), the [worker contract](docs/WORKER_CONTRACT.md), and [verification](VERIFICATION.md). Source/regression checks complement the recorded real disposable-workspace trials. An OS sandbox, automatic replay/model fallback, remote hosting, and native Codex model-picker integration remain outside this version's scope.
