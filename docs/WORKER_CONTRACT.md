@@ -136,7 +136,7 @@ Suppose the Lead selected Devin to fix a parser while a native verifier owns a p
 
 After readiness passes, pass that same object to `devin_run`. Save `job_id`, `assignment_id`, `revision`, and the returned cursor. The example check files/commands must actually exist in the target project; declaring a command does not create it or establish that it passed.
 
-The external pool allows 1–3 jobs (default 3) across bridge instances sharing a state directory. The Lead separately counts native plus external workers under the caller's existing budget. For example, if the caller allows three concurrent workers and two native workers are active, only one external slot fits that budget even if the bridge advertises three free slots.
+The external pool allows 1–4 jobs (default 4) across bridge instances sharing a state directory. The Lead separately counts native plus external workers under the caller's existing budget. For example, if the caller allows four concurrent workers and one native worker is active, only three external slots fit that budget even if the bridge advertises four free slots.
 
 Concurrent bridge jobs require independent checkouts; the same canonical checkout is locked even for disjoint files. Resource names use a namespace, such as `build:package` or `device:simulator-1`. Resources assigned to `devin` are locked across bridge jobs sharing state. Resources owned by native agents remain an orchestration responsibility; the bridge does not reserve devices or control those agents.
 

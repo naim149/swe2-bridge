@@ -17,7 +17,7 @@ Choose `read` for investigation, `edit` for owned edits with native check handof
 
 Checks must be requested byte-for-byte without prepended `cd`, shell wrappers, or combined commands. Use a separate cwd field when available; otherwise hand off a check whose required directory cannot be expressed exactly.
 
-The Lead counts native and external workers under the caller's existing budget; the shared external pool separately allows at most three. Use independent checkouts for concurrent bridge jobs, coordinate disjoint native ownership, and declare shared resources with their owners. Bridge locks do not control native agents.
+The Lead counts native and external workers under the caller's existing budget; the shared external pool separately allows at most four. Use independent checkouts for concurrent bridge jobs, coordinate disjoint native ownership, and declare shared resources with their owners. Bridge locks do not control native agents.
 
 Call `devin_preflight` without inference. Resolve its source, account, model, trust, and attachment blockers before `devin_run`. Trust may use the exact native directory record or the caller's explicit acknowledgment for this reviewed assignment; do not change global trust. Devin does not inherit Codex tools, private conversation, browser/device access, or other agents. Supply authorized text/image references through `attachments` when needed.
 

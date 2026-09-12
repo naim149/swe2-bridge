@@ -8,7 +8,7 @@ SWE2 bridge is an experimental local Codex plugin that exposes the user's instal
 - Enforce owned paths for delegated filesystem writes and exact declared check commands/cwds. These controls are not an OS sandbox and do not cover every built-in CLI tool. Keep assignment trust explicit; do not change global settings or silently substitute models.
 - A completed process does not establish task acceptance. Inspect the answer, actual file changes, and verification evidence.
 - Preserve assignment identity and revision deduplication. Follow-ups return a new job in the same session; interrupted or incomplete work needs explicit partial-work acknowledgment. Do not automatically replay mutations.
-- Count native and external workers under the caller's budget; preserve the bridge's shared external capacity of at most three and named resource ownership.
+- Count native and external workers under the caller's budget; preserve the bridge's shared external capacity of at most four and named resource ownership.
 - Use `npm ci --ignore-scripts`, then `npm run check` and `npm test` for relevant source changes. Regression tests and CI must not submit inference. Use `npm run doctor` and `devin_preflight` for prerequisites.
 - Run real model checks only when authorized. Use disposable fixtures without private project data and test the behavior changed. Keep pending validation distinct from observed passes.
 - Keep credentials, raw prompts/exports/logs/diffs, state directories, generated installations, and machine-specific configuration out of commits. Inspect the staged diff before committing.

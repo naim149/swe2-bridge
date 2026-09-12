@@ -116,7 +116,7 @@ For an authorized review check, make two small local commits and give a `read` a
 
 On authentication, model access, or trust errors, report the cause and stop the dependent test. Do not silently resubmit a mutating task or change models/permissions. Use `devin_list` to recover existing work. After timeout, interruption, or uncertain completion, inspect the job and workspace before setting `acknowledge_partial_work: true` on a deliberate next revision.
 
-The Lead counts native and external workers against its existing budget; the external shared pool has its own maximum of three. Use independent checkouts for concurrent jobs and coordinate named resources. `owned_paths` restrict delegated writes, while `edit_check` permits exact declared shell checks. These controls do not form an OS sandbox or prove that built-in CLI search obeys the bridge's read handlers.
+The Lead counts native and external workers against its existing budget; the external shared pool has its own maximum of four. Use independent checkouts for concurrent jobs and coordinate named resources. `owned_paths` restrict delegated writes, while `edit_check` permits exact declared shell checks. These controls do not form an OS sandbox or prove that built-in CLI search obeys the bridge's read handlers.
 
 Run `npm run check` and `npm test` for local source/regression verification; they do not submit inference. These checks complement real integration evidence. Run additional live scenarios when they address changed behavior or a specific unresolved concern, and state which results are still pending.
 
