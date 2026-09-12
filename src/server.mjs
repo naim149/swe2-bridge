@@ -202,7 +202,7 @@ async function main() {
       request_id: z.string().min(1).max(256).describe('Exact pending request ID returned in the job\'s attention state.'),
       decision: z.enum(['approve_once', 'deny', 'answer']),
       answers: z.record(z.string(), z.unknown()).optional().describe('Answers for decision=answer, matching the pending form\'s requested schema.'),
-      note: z.string().trim().min(1).max(4096).optional().describe('Optional explanation for the response; not additional execution permission.'),
+      note: z.string().trim().min(1).max(4096).optional().describe('Optional local audit explanation, stored with the response and not sent to Devin. To give the worker instructions, use devin_message after the current turn finishes. This note grants no execution permission.'),
     },
     annotations: {
       readOnlyHint: false,

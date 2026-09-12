@@ -34,6 +34,21 @@ Only macOS runtime support is verified. Linux is experimental; Windows is unsupp
 
 Disposable fixtures used explicit, directory-specific trust acknowledgment. ACP does not enforce the CLI print-mode trust gate; the bridge separately checks the native exact-directory trust registry or records caller acknowledgment. No global trust or permission setting was changed.
 
+## Text attachment and response-note investigation
+
+Additional real Medium probes used the versions above and fresh disposable sessions. The text probes called the production `normalizeAssignment`, `prepareContent`, and `AcpClient` directly. Each source attachment was deleted after content preparation and before submission; the read callback rejected file access. No tool calls or file reads were observed.
+
+| Probe | Observed result |
+| --- | --- |
+| Small UTF-8 embedded resource | The worker returned a random marker supplied only inside the attachment, plus exact accented Latin and Arabic text. The session advertised `embeddedContext: true`. |
+| Plain-text control | A separate session received a different random marker through an ordinary text block and returned it and the Unicode text exactly. This control did not change production serialization. |
+| Document-sized embedded resource | The 14,439-byte worker contract was expanded to 14,600 bytes with random markers near its start, middle, and end, plus Unicode. The worker returned all markers and the Unicode exactly and correctly summarized a requested contract clause. |
+| Denial-note visibility | A real `SessionManager` job requested an exact declared check with one-time approval. Denial included a random marker only in `devin_respond.note`. The marker was persisted locally, but the worker reported only the generic rejection and no separate note. The check did not run and no files changed. |
+
+These probes demonstrate embedded-text delivery for the tested sizes and content; they do not establish that a worker will follow every attached reference in a complex assignment. No dropped-resource bug was reproduced, so the embedded-resource format is unchanged. If source use is uncertain, an explicit follow-up can ask the worker to identify a specific fact from the supplied reference before continuing.
+
+Response notes are local audit context, not a worker message channel. Tool and agent guidance now state this explicitly. Instructions or corrections must be sent through a deliberate next-revision `devin_message` after the current turn ends, with partial-work acknowledgment where required. The bridge does not silently add another prompt or retry denied work.
+
 ## Focused regression coverage
 
 `npm test` runs 30 tests using real files, Git repositories, and local child processes. It needs no Devin installation, account, mocked Devin executable, or model inference. Coverage includes:

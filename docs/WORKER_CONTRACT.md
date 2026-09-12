@@ -111,7 +111,7 @@ Call `devin_wait` with `job_id`, `after_cursor` (initially 0), and `wait_seconds
 
 `needs_permission` and `needs_input` are attention states. Inspect each `pending_requests` item and its `request_id`:
 
-- For an offered declared check with `approval_allowed: true`, use `devin_respond` with `decision: "approve_once"` or `"deny"`. A note adds context, not permission. Undeclared or ambiguous commands cannot be approved; deny and amend the assignment at a later revision or use a native executor.
+- For an offered declared check with `approval_allowed: true`, use `devin_respond` with `decision: "approve_once"` or `"deny"`. Undeclared or ambiguous commands cannot be approved; deny and amend the assignment at a later revision or use a native executor.
 - For a form request, use `decision: "answer"` and an `answers` object matching the requested schema's declared string fields and choices. Use the caller's existing context, or ask for required missing information. Unsupported forms are declined; do not invent an answer merely to advance the job.
 
 For example, after reviewing an actual pending allowed request:
@@ -121,6 +121,8 @@ For example, after reviewing an actual pending allowed request:
 ```
 
 Permission/input responses are recorded. Repeating an identical response can recover its result; changing an already recorded decision returns a conflict. A worker waiting for attention still occupies its slot and remains subject to its deadline.
+
+The optional `note` is a **local audit explanation only**: it is stored in the job's response artifact and is not sent to Devin. Do not put instructions, corrected paths, or source references there expecting the worker to receive them. To convey that context, wait for the current turn to finish, inspect any partial work, and send an explicit `devin_message` with the next revision as described below. Include `acknowledge_partial_work: true` when the prior turn did not complete. A note grants no additional permission.
 
 ## Follow-ups and recovery
 
