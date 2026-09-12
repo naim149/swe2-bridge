@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
+import { createRestrictedGitReadPolicy } from './git-read-policy.mjs';
 
 const exec = promisify(execFile);
 const BUNDLED_CLI = '/Applications/Devin.app/Contents/Resources/app/extensions/windsurf/devin/bin/devin';
@@ -89,23 +90,41 @@ export async function repositoryRoot(cwd) {
   }
 }
 
-export async function gitSnapshot(cwd) {
-  const options = { cwd, timeout: 10000, maxBuffer: 4 * 1024 * 1024, env: childEnvironment() };
-  const root = await repositoryRoot(cwd);
-  if (!root) return { repository: null, files: {}, head: null, index: {}, tree: {}, status: '', diff: '', staged_diff: '' };
+export async function gitSnapshot(cwd, { review = false } = {}) {
+  const policy = review ? await createRestrictedGitReadPolicy(cwd, { environment: childEnvironment() }) : null;
+  const options = { cwd, timeout: 10000, maxBuffer: 4 * 1024 * 1024, env: policy?.env ?? childEnvironment() };
+  const git = async args => {
+    const result = await exec('git', [...(policy?.prefix ?? []), ...args], { ...options, ...(review ? { encoding: 'buffer' } : {}) });
+    if (review) {
+      try { result.stdout = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(result.stdout); }
+      catch { throw fault('GIT_INSPECTION_FAILED', 'Restricted Git snapshot output is not valid UTF-8; no partial evidence was accepted.'); }
+    }
+    return result;
+  };
+  let root;
+  if (review) {
+    try { root = await fs.realpath((await git(['rev-parse', '--show-toplevel'])).stdout.replace(/\r?\n$/, '')); }
+    catch (error) {
+      if (error.code === 128 && /not a git repository/i.test(String(error.stderr || ''))) root = null;
+      else throw error;
+    }
+  } else root = await repositoryRoot(cwd);
+  if (!root) return { repository: null, files: {}, head: null, index: {}, tree: {}, status: '', diff: '', staged_diff: '',
+    ...(review ? { complete: false, coverage: 'unavailable_non_git', limitations: ['No Git repository was available for a restricted review snapshot.'] } : {}) };
   options.cwd = root;
+  const submodules = review ? ['--ignore-submodules=all'] : [];
   const [status, diff, staged, indexResult, headResult] = await Promise.all([
-    exec('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], options),
-    exec('git', ['diff', '--no-ext-diff', '--no-textconv'], options),
-    exec('git', ['diff', '--cached', '--no-ext-diff', '--no-textconv'], options),
-    exec('git', ['ls-files', '--stage', '-z', '--full-name'], options),
-    exec('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], options).catch((error) => {
+    git(['status', '--porcelain=v1', '-z', '--untracked-files=all', ...submodules]),
+    git(['diff', '--no-ext-diff', '--no-textconv', ...submodules]),
+    git(['diff', '--cached', '--no-ext-diff', '--no-textconv', ...submodules]),
+    git(['ls-files', '--stage', '-z', '--full-name']),
+    git(['rev-parse', '--verify', '--quiet', 'HEAD']).catch((error) => {
       if (error.code === 1) return { stdout: '' }; // An unborn branch has no HEAD.
       throw error;
     }),
   ]);
   const head = headResult.stdout.trim() || null;
-  const treeResult = head ? await exec('git', ['ls-tree', '-r', '-z', head], options) : { stdout: '' };
+  const treeResult = head ? await git(['ls-tree', '-r', '-z', head]) : { stdout: '' };
   const parseEntries = (output) => {
     const entries = Object.create(null);
     for (const record of output.split('\0').filter(Boolean)) {
@@ -138,11 +157,30 @@ export async function gitSnapshot(cwd) {
       if (previous) files[previous] = `renamed-to:${name}`;
     }
   }
-  return { repository: root, files, head, index, tree, status: status.stdout, diff: diff.stdout, staged_diff: staged.stdout };
+  const snapshot = { repository: root, files, head, index, tree, status: status.stdout, diff: diff.stdout, staged_diff: staged.stdout };
+  if (review) {
+    const gitlinks = new Set([index, tree].flatMap(entries => Object.entries(entries).filter(([, value]) => /^160000 /m.test(value)).map(([name]) => name)));
+    snapshot.complete = !policy.conversion_filters_disabled && gitlinks.size === 0;
+    snapshot.coverage = 'git_visible_worktree_index_and_head_ignored_files_and_submodule_interiors_excluded';
+    snapshot.limitations = [
+      'Ignored files, external paths, and transient changes reverted before inspection are not fully observed.',
+      ...(policy.conversion_filters_disabled ? ['Configured conversion filters were disabled; equivalence to ordinary filtered Git status/diffs is unknown.'] : []),
+      ...(gitlinks.size ? ['Submodule interiors and worktree commit changes were excluded to avoid invoking nested Git helpers; index and HEAD gitlink entries remain recorded.'] : []),
+    ];
+    snapshot.restricted_git = { conversion_filters_disabled: policy.conversion_filters_disabled,
+      function_drivers_disabled: policy.function_drivers_disabled, submodule_paths: [...gitlinks].sort(),
+      global_git_config_disabled: true, external_helpers_disabled: true, lazy_fetch_disabled: true, replacement_refs_disabled: true };
+  }
+  return snapshot;
 }
 
 export function snapshotEvidence(snapshot) {
-  return { repository: snapshot.repository, files: snapshot.files, head: snapshot.head, index: snapshot.index, tree: snapshot.tree };
+  return { repository: snapshot.repository, files: snapshot.files, head: snapshot.head, index: snapshot.index, tree: snapshot.tree,
+    ...(Object.hasOwn(snapshot, 'complete') ? { complete: snapshot.complete } : {}),
+    ...(Object.hasOwn(snapshot, 'coverage') ? { coverage: snapshot.coverage } : {}),
+    ...(Object.hasOwn(snapshot, 'limitations') ? { limitations: snapshot.limitations } : {}),
+    ...(Object.hasOwn(snapshot, 'restricted_git') ? { restricted_git: snapshot.restricted_git } : {}),
+  };
 }
 
 async function exportResult(file) {

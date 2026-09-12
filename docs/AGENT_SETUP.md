@@ -78,7 +78,7 @@ If moving an existing `swe2-bridge-local` installation to this checkout, stop ac
 
 ## 5. Verify discovery in a fresh task
 
-Start a fresh Codex task/session after installation if the user's request includes doing so. Otherwise tell the user to open a fresh task; do not create an unsolicited persistent task. Verify the `devin` skill and all nine tools: `devin_preflight`, `devin_run`, `devin_message`, `devin_wait`, `devin_wait_many`, `devin_list`, `devin_respond`, `devin_cancel`, and `devin_record_check`. Prefixes may depend on Codex's MCP namespace.
+Start a fresh Codex task/session after installation if the user's request includes doing so. Otherwise tell the user to open a fresh task; do not create an unsolicited persistent task. Verify the `devin` skill and all ten tools: `devin_preflight`, `devin_run`, `devin_message`, `devin_wait`, `devin_wait_many`, `devin_list`, `devin_report`, `devin_respond`, `devin_cancel`, and `devin_record_check`. Prefixes may depend on Codex's MCP namespace.
 
 Discovery is separate from inference. `devin_preflight` can inspect a bounded assignment without a model task, including exact model catalog visibility, source assumptions, trust, and attachment readiness. If the user asked only for setup, finish with discovery/preflight and report that real inference has not been checked.
 
@@ -92,10 +92,27 @@ Call the real tools once per intended task:
 
 1. Create a structured assignment with a stable `assignment_id`, revision 1, absolute fixture path, exact model, execution profile, ownership/check policy, acceptance criteria, and short deadline.
 2. Run `devin_preflight`, then use the same ready assignment with `devin_run`. Save its `job_id`; never change the identity merely to force a retry.
-3. Collect progress with `devin_wait` or `devin_wait_many` in waits of at most 30 seconds. Pass each job's returned `next_cursor` back as `after_cursor` and inspect cursor gaps/truncation.
+3. Collect progress with `devin_wait` or `devin_wait_many`; waits default to 10 seconds and allow up to 55. Default `mode: "progress"` returns transcript events. Pass each job's returned `next_cursor` back as `after_cursor` and inspect cursor gaps/truncation.
 4. Respond to permitted attention requests with `devin_respond`. Undeclared commands require an amended assignment or native handoff; form answers must match the requested fields.
 5. Use `devin_cancel` when work should stop. Inspect partial changes before an explicit `devin_message` follow-up. A follow-up returns a new job ID in the same assignment/session at the next revision.
-6. Check the answer, workspace, and verification independently. Record native checks with `devin_record_check` only after they actually ran; include the actual cwd and recorded after-HEAD as `source_sha` when known. Omitted source SHA leaves source provenance unknown, and the record never proves the bridge independently executed the check.
+6. Retrieve the retained answer with `devin_report` after completion, then check the answer, workspace, and verification independently. Execution, evidence, policy problems, verification, and pending Lead acceptance are separate. A denied action does not prevent retrieving a useful answer; `task_accepted: false` is pending acceptance. Record native checks with `devin_record_check` only after they actually ran; include the actual cwd and recorded after-HEAD as `source_sha` when known. Omitted source SHA leaves source provenance unknown, and the record never proves the bridge independently executed the check.
+
+For an optional compact wait, use `mode: "quiet"`. It ignores ordinary progress and wakes for a new terminal outcome, new actionable request, error, or timeout. For example, start a first quiet wait with:
+
+```json
+{
+  "job_id": "<returned-job-id>",
+  "mode": "quiet",
+  "after_cursor": 0,
+  "wait_seconds": 55
+}
+```
+
+Store the returned `next_token` and send it as `after_token` on the next quiet wait for that job. In `devin_wait_many`, keep `mode` on the whole call and each `after_token` in its matching `jobs[]` item. Remove completed jobs from continuing waits or acknowledge their terminal token; otherwise the same terminal outcome is delivered again. Quiet keeps `next_cursor` equal to the supplied `after_cursor` and does not consume transcript events. Keep that cursor for later progress diagnostics rather than replacing it with the latest `cursor`.
+
+Inspect compact `changed`, `wake_reason`, pending requests, and the bounded final handoff on changed terminal results. Acknowledging a request does not answer it: use `devin_respond`. Use `devin_report` for the retained final answer independently of event retention, or progress mode/private artifact records for diagnostics, respecting gaps and truncation. Cancelling a wait leaves the job running. The manager internally rejects with `WAIT_CANCELLED`, but MCP suppresses that cancelled response and the caller receives its SDK/host cancellation result. `devin_cancel` is the separate worker cancellation action.
+
+For an authorized review check, make two small local commits and give a `read` assignment an explicit `review: {base_sha, head_sha}` pair. Keep the outer `base_sha` equal to the actual checkout expectation. Verify preflight's complete packet, immutable identities, actual diff, and applicable head-tree instructions; a missing or unusable comparison must block before inference. Do not add Git/history or shell tools to the worker. The [prepared review contract](WORKER_CONTRACT.md#prepared-git-reviews) documents limits and what additional context the Lead must supply.
 
 On authentication, model access, or trust errors, report the cause and stop the dependent test. Do not silently resubmit a mutating task or change models/permissions. Use `devin_list` to recover existing work. After timeout, interruption, or uncertain completion, inspect the job and workspace before setting `acknowledge_partial_work: true` on a deliberate next revision.
 

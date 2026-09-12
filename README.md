@@ -1,10 +1,10 @@
 # SWE2 bridge for Codex
 
-Use your installed Devin CLI as an additional worker in Codex. Version 0.2 adds persistent assignments, follow-ups in the same Devin session, structured permissions, declared checks, and a shared pool of up to three independent workers.
+Use your installed Devin CLI as an additional worker in Codex. Persistent assignments support follow-ups in the same Devin session, structured permissions, declared checks, and a shared pool of up to three independent workers. Version 0.3 adds prepared Git review comparisons, optional quiet waits, and retrievable final reports.
 
 Your existing task, role, and model-selection rules choose when to use Devin alongside native Codex agents. The plugin adds no routing priorities and does not add an entry to Codex's native model picker.
 
-**Status:** experimental. Version 0.2 has real macOS session, edit/check, image, follow-up, and crash-recovery evidence. Linux remains experimental and Windows is unsupported. See [verification](VERIFICATION.md) for tested behavior and qualification limits.
+**Status:** experimental. Real macOS evidence covers session/edit/check behavior, images, follow-ups, crash recovery, and the version 0.3 review/wait/report additions. Linux remains experimental and Windows is unsupported. See [verification](VERIFICATION.md) for tested behavior and qualification limits.
 
 ## How it runs
 
@@ -43,11 +43,18 @@ Resolve any prerequisite reported by `doctor`, then rerun it. These setup comman
 | `devin_preflight` | Check a structured assignment and prerequisites without inference. |
 | `devin_run` | Start an assignment, or return its existing job for the same identity and revision. |
 | `devin_message` | Create the next revision as a new job in the same Devin session. |
-| `devin_wait` / `devin_wait_many` | Collect progress, attention requests, and results using per-job cursors. |
+| `devin_wait` / `devin_wait_many` | Collect progress with per-job cursors, or opt into compact quiet waits for new outcomes and attention. |
+| `devin_report` | Retrieve a finished job's retained answer and separate execution, evidence, policy, verification, and acceptance states. |
 | `devin_list` | Discover persisted jobs and recover assignment identities. |
 | `devin_respond` | Approve an allowed declared check once, deny a request, or answer a requested form. |
 | `devin_cancel` | Stop a job. Changes already made remain in the workspace. |
 | `devin_record_check` | Attach caller-reported evidence from a native or other authorized executor. |
+
+Waits default to `mode: "progress"`. Optional `mode: "quiet"` ignores ordinary progress and returns compact state on a new terminal outcome, actionable request, error, or timeout. Pass each job's `next_token` back as `after_token` to acknowledge what you have seen. Both modes wait up to 55 seconds, defaulting to 10. Cancelling a wait stops only the wait; use `devin_cancel` to stop the worker. See the [worker contract](docs/WORKER_CONTRACT.md) for cursor and acknowledgment details.
+
+For a Git review, add `review: {base_sha, head_sha}` with explicit immutable commit IDs to a `read` assignment. The bridge prepares a bounded complete comparison diff, changed-file metadata, and applicable head-revision `AGENTS.md` files. These comparison IDs are separate from the assignment's `base_sha`, which asserts checkout HEAD. Missing or unsupported evidence blocks preparation; no Git/history or shell tools are added to the reviewer. See [review preparation](docs/WORKER_CONTRACT.md#prepared-git-reviews) for coverage and limits.
+
+After a turn finishes, `devin_report` retrieves its retained answer independently of the rolling event buffer. A completed answer can coexist with denied actions or incomplete verification. `task_accepted: false` means the Lead has not accepted the work; inspect all outcome fields before deciding whether it meets the task.
 
 The supported model IDs are exactly `swe-2-medium` (default), `swe-2-high`, and `swe-2-max`. The selected model must be available to your Devin account; aliases and silent fallback are not accepted.
 

@@ -76,11 +76,15 @@ That flag permits an unverified platform; it does not establish support. Use onl
 
 ## 4. Start a fresh Codex task
 
-Existing tasks can retain an older set of tools. Start a new task after installation or update, then ask it to use the Devin worker. Version 0.2 exposes nine tools, from `devin_preflight` through session follow-ups and verification evidence, plus the `devin` skill. Check the complete [tool contract](WORKER_CONTRACT.md). The UI may prefix tool names with the MCP server name.
+Existing tasks can retain an older set of tools. Start a new task after installation or update, then ask it to use the Devin worker. Version 0.3 exposes ten tools, including `devin_preflight`, session follow-ups, waits, and `devin_report`, plus the `devin` skill. Check the complete [tool contract](WORKER_CONTRACT.md). The UI may prefix tool names with the MCP server name.
 
 The worker is available alongside native agents. Existing user rules decide when to use it; installation does not rewrite those rules or add a native model-picker option.
 
 Choose a profile for each assignment: `read`, `edit`, or `edit_check`. Edit profiles require explicit owned paths. Only `edit_check` allows exact declared commands assigned to Devin; their actual working directories are enforced by the bridge terminal handlers. Checks marked `approval: "ask"` produce an attention request that can be approved once with `devin_respond`. Unknown commands cannot be approved without amending the assignment or handing the work to a native executor.
+
+Optional prepared reviews use explicit local comparison commits and require Git's `--attr-source` support. Preflight reports an unsupported Git version or missing comparison evidence before inference. Optional quiet waits allow up to 55 seconds under the plugin's 75-second MCP timeout; progress mode remains the default. Final reports are stored through the durable local job record and can be retrieved without draining progress events.
+
+The qualified Codex host queues steering input until a held wait finishes. Explicit turn interruption returns promptly without cancelling the worker; use a shorter `wait_seconds` when steering responsiveness matters. Quiet waits do not install a background scheduler or promise to wake a finished caller task.
 
 ## 5. Optional real acceptance check
 
