@@ -1,0 +1,20 @@
+{
+  "name": "swe2-bridge-local",
+  "interface": {
+    "displayName": "Swe2 Bridge Local"
+  },
+  "plugins": [
+    {
+      "name": "swe2-bridge",
+      "source": {
+        "source": "local",
+        "path": "./plugins/swe2-bridge"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Devin CLI"
+  short_description: "Delegate engineering tasks through Devin CLI"
+  default_prompt: "Use $devin to delegate this task through the installed Devin CLI and collect the result."

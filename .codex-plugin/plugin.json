@@ -1,0 +1,34 @@
+{
+  "name": "swe2-bridge",
+  "version": "0.1.0",
+  "description": "Use the installed Devin CLI as an additional worker in Codex.",
+  "author": {
+    "name": "Naim",
+    "url": "https://github.com/naim149"
+  },
+  "homepage": "https://github.com/naim149/swe2-bridge#readme",
+  "repository": "https://github.com/naim149/swe2-bridge",
+  "license": "MIT",
+  "keywords": [
+    "devin",
+    "swe-2",
+    "agents",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Devin CLI",
+    "shortDescription": "Delegate tasks through the installed Devin CLI",
+    "longDescription": "Run, collect, and cancel Devin CLI worker tasks from Codex using the existing orchestration and model-selection rules.",
+    "developerName": "Naim",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use Devin CLI to work on this task."
+    ]
+  }
+}

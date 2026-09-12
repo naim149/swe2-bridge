@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+bridge_root=$(CDPATH= cd -P "$(dirname "$0")/.." && pwd)
+path_node=$(command -v node 2>/dev/null || true)
+for node_candidate in "$path_node" /opt/homebrew/bin/node /usr/local/bin/node; do
+  [ -n "$node_candidate" ] && [ -x "$node_candidate" ] || continue
+  if "$node_candidate" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' >/dev/null 2>&1; then
+    exec "$node_candidate" "$bridge_root/src/server.mjs"
+  fi
+done
+
+printf '%s\n' 'swe2-bridge requires Node.js 22 or later. Install Node, then rerun npm run install:local.' >&2
+exit 1
