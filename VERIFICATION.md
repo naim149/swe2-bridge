@@ -22,6 +22,8 @@ The shared default and maximum are four; explicitly configured limits from one t
 
 The new fixture holds four live local ACP workers across two managers and distinct Git checkouts, rejects a fifth before prompt submission, preserves same-checkout exclusion, and reuses a cancelled job's released slot. A real MCP stdio connection separately confirms default capacity four, a configured lower cap, and refusal when four slots are held by another process. Invalid capacities fail closed. Test managers close before fixture directories are removed.
 
+The standalone installer succeeded with the shipped four-slot configuration in an isolated Codex home; an override of five was rejected before installation. The staged MCP server reported version 0.3.1 and capacity four. This includes correction of the installer's previous three-slot validation.
+
 These are local protocol/locking fixtures, not four concurrent real SWE-2 engineering jobs or a throughput benchmark. Existing sessions may retain an older three-slot runtime until refreshed. The caller still counts native and external workers together and owns native resource coordination.
 
 ## Version 0.3 review and report qualification

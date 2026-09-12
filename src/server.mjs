@@ -90,7 +90,7 @@ async function invoke(operation) {
 async function main() {
   const manager = new SessionManager();
   const server = new McpServer(
-    { name: 'devin-bridge', version: '0.3.0' },
+    { name: 'devin-bridge', version: '0.3.1' },
     {
       instructions: [
         'Devin CLI is an available worker for delegated engineering tasks.',
