@@ -18,6 +18,127 @@ const readJson = async file => JSON.parse(await fs.readFile(file, 'utf8'));
 const internal = Symbol('runtime');
 const MAX_EVENTS = 256;
 const TEXT_LIMIT = 32 * 1024;
+export const MAX_WAIT_SECONDS = 55;
+const MAX_HANDOFF_BYTES = 16 * 1024;
+
+function clippedText(value, limit, tail = false) {
+  const bytes = Buffer.from(String(value ?? ''));
+  if (bytes.length <= limit) return bytes.toString('utf8');
+  let start = tail ? bytes.length - limit : 0;
+  let end = tail ? bytes.length : limit;
+  if (tail) while ((bytes[start] & 0xc0) === 0x80) start++;
+  else while ((bytes[end] & 0xc0) === 0x80) end--;
+  return bytes.subarray(start, end).toString('utf8');
+}
+
+function declaredChecks(assignment) {
+  return (assignment?.checks || []).map(check => ({ ...check, status: 'not_run', evidence_source: null,
+    native_handoff: check.owner && check.owner !== 'devin' || assignment.profile !== 'edit_check'
+      ? { check_id: check.id, owner: check.owner || 'native_executor', command: check.command, cwd: check.cwd,
+        reason: 'Assigned native ownership or execution profile' } : null }));
+}
+
+function reportChecks(job) {
+  // Earlier v0.2 jobs initialized checks only after preflight. Preserve their
+  // declared work in reports even when startup stopped before that point.
+  return job.checks?.length ? job.checks : declaredChecks(job.assignment);
+}
+
+function finalHandoff(job) {
+  const files = job.changed_files;
+  const checks = reportChecks(job);
+  const summary = clippedText(job.summary, 4096, true);
+  const result = {
+    summary, summary_truncated: summary !== (job.summary || ''), output_truncated: Boolean(job.output_truncated),
+    error: job.error ? { code: clippedText(job.error.code, 128), message: clippedText(job.error.message, 1024) } : null,
+    blocker_codes: [...new Set((job.blockers || []).map(item => clippedText(item.code, 128)))].slice(0, 16),
+    blocker_count: job.blockers?.length || 0,
+    changed_files: Array.isArray(files) ? files.slice(0, 16).map(file => clippedText(file, 256)) : null,
+    changed_file_count: Array.isArray(files) ? files.length : null,
+    scope_status: job.scope_status ?? 'unknown',
+    checks: checks.map(check => ({ id: check.id, status: check.status,
+      owner: check.owner ?? check.native_handoff?.owner ?? (job.assignment?.profile === 'edit_check' ? 'devin' : null),
+      evidence_source: check.evidence_source ?? null,
+      source_binding: check.source_binding ?? null,
+      exit_code: check.exit_code ?? check.native_evidence?.exit_code ?? null,
+      ...(check.native_evidence ? { native_status: check.native_evidence.status } : {}) })),
+    check_count: checks.length,
+    evidence: { completeness: job.evidence?.completeness ?? 'unknown',
+      reasons: (job.evidence?.reasons || []).slice(0, 8).map(reason => clippedText(reason, 128)),
+      coverage: clippedText(job.evidence?.coverage ?? 'unknown', 256),
+      limitations: (job.evidence?.limitations || []).slice(0, 8).map(limit => clippedText(limit, 512)) },
+    source: { base_sha: job.source?.base_sha ?? null, before_head: job.source?.before?.head ?? null, after_head: job.source?.after?.head ?? null },
+    task_accepted: false,
+  };
+  result.details_truncated = Boolean(
+    files?.length > 16 || files?.some(file => Buffer.byteLength(file) > 256) ||
+    (job.blockers?.length || 0) > 16 || (job.evidence?.reasons?.length || 0) > 8 ||
+    job.evidence?.reasons?.some(reason => Buffer.byteLength(String(reason)) > 128) ||
+    (job.evidence?.limitations?.length || 0) > 8 || job.evidence?.limitations?.some(limit => Buffer.byteLength(String(limit)) > 512) ||
+    Buffer.byteLength(job.evidence?.coverage ?? '') > 256 ||
+    job.error && JSON.stringify(result.error) !== JSON.stringify(job.error));
+  // Bound even unusually long identifiers and JSON-escaped text. The full
+  // durable record remains available; this handoff is never task acceptance.
+  while (Buffer.byteLength(JSON.stringify(result)) > MAX_HANDOFF_BYTES) {
+    result.details_truncated = true;
+    if (result.changed_files?.length) result.changed_files.pop();
+    else if (result.checks.length) result.checks.pop();
+    else if (result.summary) {
+      result.summary = clippedText(result.summary, Math.floor(Buffer.byteLength(result.summary) / 2), true);
+      result.summary_truncated = true;
+    } else if (result.blocker_codes.length) result.blocker_codes.pop();
+    else if (result.evidence.limitations.length) result.evidence.limitations.pop();
+    else if (result.evidence.reasons.length) result.evidence.reasons.pop();
+    else break; // All remaining fields have small, assignment-enforced bounds.
+  }
+  return result;
+}
+
+function outcomes(job, state = job.state) {
+  const checks = reportChecks(job);
+  const checkStates = checks.map(check => check.native_evidence?.status ?? check.status);
+  const legacyCompleted = job.schema_version !== 2 && state === 'completed' && job.exit_code === 0 && job.session_id;
+  const execution = ['cancelled', 'timed_out', 'interrupted'].includes(state) ? state
+    : job.stop_reason === 'end_turn' || legacyCompleted ? 'completed'
+      : job.stop_reason === 'refusal' ? 'refused'
+        : job.prompt_attempted === false || job.preflight?.ready === false || !job.session_id && !job.stop_reason ? 'not_started'
+          : ['failed', 'blocked'].includes(state) ? 'failed' : terminal.has(state) ? 'incomplete' : 'running';
+  const verification = !checks.length ? 'not_declared'
+    : checkStates.includes('failed') ? 'failed'
+      : checkStates.every(value => value === 'passed') ? 'complete' : 'incomplete';
+  const policy = job.out_of_scope?.length || job.scope_status === 'violated' ? 'scope_violation'
+    : job.blockers?.length ? 'blocked_actions'
+      : job.scope_status !== 'within_owned_paths' ? 'unknown' : 'clear';
+  return { execution: { status: execution, stop_reason: job.stop_reason ?? null, prompt_attempted: job.prompt_attempted ?? null },
+    evidence: { completeness: job.evidence?.completeness ?? 'unknown' },
+    verification: { status: verification }, policy: { status: policy },
+    acceptance: { status: 'pending_lead_review', task_accepted: false } };
+}
+
+function waitOptions({ mode = 'progress', wait_seconds = 10, after_cursor = 0, after_token } = {}) {
+  if (!['progress', 'quiet'].includes(mode)) throw fault('INVALID_WAIT_MODE', 'Use progress or quiet wait mode.');
+  if (after_token !== undefined && (typeof after_token !== 'string' || !/^[a-f0-9]{64}$/.test(after_token))) {
+    throw fault('INVALID_WAIT_TOKEN', 'Use the next_token returned by a quiet wait.');
+  }
+  return { mode, seconds: integer(wait_seconds, 10, MAX_WAIT_SECONDS, 'wait_seconds'),
+    cursor: integer(after_cursor, 0, Number.MAX_SAFE_INTEGER, 'after_cursor'), token: after_token };
+}
+
+function waitCancelled(signal) {
+  if (signal?.aborted) throw fault('WAIT_CANCELLED', 'This wait was cancelled; the worker job was not cancelled.');
+}
+
+function waitDelay(ms, signal) {
+  waitCancelled(signal);
+  return new Promise((resolve, reject) => {
+    const finish = () => { signal?.removeEventListener('abort', abort); resolve(); };
+    const timer = setTimeout(finish, Math.max(0, ms));
+    const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort);
+      reject(fault('WAIT_CANCELLED', 'This wait was cancelled; the worker job was not cancelled.')); };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+  });
+}
 
 function stable(value) {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -99,6 +220,7 @@ export class SessionManager {
   async preflight(args) {
     const assignment = await normalizeAssignment(args, { defaultModel: this.defaultModel });
     const result = await inspectReadiness(assignment);
+    if (!result.ready && result.review?.complete === false) return { ...result, capacity: this.describe() };
     const prepared = await prepareContent(assignment);
     return { ...result, attachments: prepared.attachments, required_capabilities: prepared.required_capabilities, capacity: this.describe() };
   }
@@ -158,7 +280,9 @@ export class SessionManager {
         session_id: previous?.session_id ?? null, session_resumed: Boolean(previous), runner_pid: process.pid,
         runner_identity: await processIdentity(process.pid), pid: null, process_identity: null,
         started_at: stamp(), finished_at: null, cursor: 0, events: [], output_truncated: false,
-        summary: '', error: null, blockers: [], pending_requests: [], checks: [], active_terminals: [],
+        summary: '', error: null, blockers: [], pending_requests: [], checks: declaredChecks(assignment), active_terminals: [],
+        prompt_attempted: false,
+        ...(assignment.review ? { review: { ...assignment.review, complete: false } } : {}),
         changed_files: null, scope_status: 'unknown', task_accepted: false,
         artifacts: { directory, record: path.join(directory, 'job.json'), before: path.join(directory, 'before.json'),
           after: path.join(directory, 'after.json'), before_diff: path.join(directory, 'before.diff'),
@@ -174,9 +298,14 @@ export class SessionManager {
       await jsonFile(path.join(indexDir, `${assignment.revision}.json`), { job_id: jobId, intent_hash: intentHash, previous_job_id: job.previous_job_id });
       const readiness = await inspectReadiness(assignment);
       job.preflight = readiness;
+      if (readiness.review) job.review = readiness.review;
       if (!readiness.ready) throw fault(readiness.blockers[0]?.code || 'PREFLIGHT_BLOCKED', readiness.blockers.map(item => item.message).join(' '));
       const prepared = await prepareContent(assignment);
+      if (readiness.review?.packet_sha256 && readiness.review.packet_sha256 !== prepared.review?.packet_sha256) {
+        throw fault('REVIEW_EVIDENCE_CHANGED', 'The comparison packet changed after preflight. No prompt was submitted.');
+      }
       job.attachments = prepared.attachments;
+      if (prepared.review) job.review = prepared.review;
       job.required_capabilities = prepared.required_capabilities;
       const checkout = readiness.source.repository || assignment.cwd;
       const requestedLocks = [path.join(this.root, 'locks', digest(checkout)),
@@ -195,7 +324,7 @@ export class SessionManager {
       }
       if (slot === undefined) throw fault('WORKER_CAPACITY', 'All configured external worker slots are occupied. The caller must also count its native workers.');
       job.slot = slot;
-      const baseline = await gitSnapshot(assignment.cwd);
+      const baseline = await gitSnapshot(assignment.cwd, { review: Boolean(assignment.review) });
       if (assignment.base_sha && baseline.head !== assignment.base_sha) throw fault('SOURCE_CHANGED', 'Git HEAD changed after preflight. No prompt was submitted.');
       job[internal].baseline = snapshotEvidence(baseline);
       await Promise.all([
@@ -205,9 +334,6 @@ export class SessionManager {
         jsonFile(job.artifacts.prompt, prepared.content),
       ]);
       job.workspace_root = baseline.repository || assignment.cwd;
-      job.checks = assignment.checks.map(check => ({ ...check, status: 'not_run', evidence_source: null,
-        native_handoff: check.owner && check.owner !== 'devin' || assignment.profile !== 'edit_check'
-          ? { check_id: check.id, owner: check.owner || 'native_executor', command: check.command, cwd: check.cwd, reason: 'Assigned native ownership or execution profile' } : null }));
       await this.event(job, 'starting', { session_resumed: Boolean(previous), slot });
       if (this.closed) throw fault('BRIDGE_CLOSED', 'The bridge closed before inference started.');
       // The initial record and retry identity exist before a prompt can be sent.
@@ -262,6 +388,7 @@ export class SessionManager {
       if (runtime.stopReason || this.closed) throw fault('WORKER_STOPPED', 'The worker was stopped before its prompt.');
       runtime.timer = setTimeout(() => { void this.stop(job, 'timed_out').catch(() => {}); }, job.assignment.timeout_seconds * 1000);
       runtime.control = setInterval(() => { void this.controls(job).catch(error => { job.error ||= { code: 'CONTROL_FAILED', message: error.message }; }); }, 200);
+      job.prompt_attempted = true;
       const result = await runtime.client.prompt(job.session_id, content, { timeoutMs: Math.min(3_600_000, job.assignment.timeout_seconds * 1000 + 5000) });
       job.stop_reason = result.stopReason;
       job.state = runtime.stopReason || (result.stopReason === 'end_turn' ? 'completed' : result.stopReason === 'cancelled' ? 'cancelled' : result.stopReason === 'refusal' ? 'blocked' : 'incomplete');
@@ -289,7 +416,7 @@ export class SessionManager {
       job.output_truncated ||= Boolean(runtime.client.stats.stderrTruncated || runtime.client.stats.updatesTruncated);
       let after;
       try {
-        after = await gitSnapshot(job.cwd);
+        after = await gitSnapshot(job.cwd, { review: Boolean(job.assignment.review) });
         await Promise.all([jsonFile(job.artifacts.after, snapshotEvidence(after)),
           fs.writeFile(job.artifacts.after_diff, after.diff, { mode: 0o600 }),
           fs.writeFile(path.join(job.artifacts.directory, 'after-staged.diff'), after.staged_diff, { mode: 0o600 })]);
@@ -520,11 +647,82 @@ export class SessionManager {
     result.events_remaining = fresh.length > result.events.length;
     result.cursor_gap = Boolean(events?.length && afterCursor < events[0].cursor - 1);
     result.task_accepted = false;
+    result.outcome = outcomes(job, result.state);
     result.assignment = assignment ? { role: assignment.role, owned_paths: assignment.owned_paths, profile: assignment.profile,
       resources: assignment.resources, acceptance: assignment.acceptance } : undefined;
     result.capacity = this.describe();
     if (deduplicated) result.deduplicated = true;
     return result;
+  }
+
+  quietView(job, cursor, afterToken) {
+    const state = job[internal]?.finalizing && !job[internal]?.finished ? 'finalizing' : job.state;
+    const finished = terminal.has(state);
+    const pending = job.pending_requests || [];
+    // Text/tool progress must not invalidate the acknowledgment. Terminal
+    // evidence changes (e.g. a later native check record) do invalidate it.
+    const token = digest({ job_id: job.job_id, revision: job.revision, state, pending,
+      report: finished ? { finished_at: job.finished_at, stop_reason: job.stop_reason, prompt_attempted: job.prompt_attempted,
+        exit_code: job.exit_code, summary: job.summary, error: job.error,
+        blockers: job.blockers, changed_files: job.changed_files, scope_status: job.scope_status, out_of_scope: job.out_of_scope,
+        checks: reportChecks(job), source: job.source, evidence: job.evidence, output_truncated: job.output_truncated,
+        preflight_ready: job.preflight?.ready,
+        model: job.model, resolved_model: job.resolved_model, session_id: job.session_id, review: job.review } : null });
+    const changed = token !== afterToken;
+    const result = {
+      mode: 'quiet', job_id: job.job_id, assignment_id: job.assignment_id, revision: job.revision,
+      state, changed, next_token: token, resolved_model: job.resolved_model ?? null, session_id: job.session_id ?? null,
+      wake_reason: changed && pending.length ? 'attention' : changed && finished ? 'terminal' : 'timeout',
+      cursor: job.cursor || 0,
+      // Quiet acknowledgment is separate from transcript consumption. Retain
+      // the caller's diagnostic cursor and accurately report retention gaps.
+      next_cursor: cursor,
+      cursor_gap: Boolean(job.events?.length && cursor < job.events[0].cursor - 1),
+      progress_events_suppressed: true,
+      task_accepted: false,
+      artifacts: { record: job.artifacts?.record || path.join(this.root, 'jobs', job.job_id, 'job.json') },
+    };
+    if (changed && pending.length) result.pending_requests = pending;
+    if (changed && finished) { result.handoff = finalHandoff(job); result.outcome = outcomes(job, state); }
+    return result;
+  }
+
+  async report({ job_id }) {
+    const job = await this.load(job_id);
+    const state = job[internal]?.finalizing && !job[internal]?.finished ? 'finalizing' : job.state;
+    if (!terminal.has(state)) throw fault('JOB_ACTIVE', 'The final report is available after this turn finishes.');
+    const compact = finalHandoff(job);
+    const outcome = outcomes(job, state);
+    const blockers = (job.blockers || []).slice(0, 16).map(item => ({ code: item.code, ...bounded(item, 2048) }));
+    const checks = compact.checks.map(check => {
+      const native = reportChecks(job).find(item => item.id === check.id)?.native_evidence;
+      return { ...check, ...(native ? { native_evidence: { status: native.status, exit_code: native.exit_code,
+        executor: native.executor, source_sha: native.source_sha, recorded_at: native.recorded_at,
+        provenance: 'caller_reported_not_independently_executed' } } : {}) };
+    });
+    // job.json durably stores the retained answer and evidence independently of
+    // the rolling event buffer. Project that current record rather than keeping
+    // a second report file which could become stale after native check records.
+    return { report_available: true, report_source: 'durable_job_record', job_id: job.job_id,
+      assignment_id: job.assignment_id, revision: job.revision, job_state: state, legacy: job.schema_version !== 2,
+      model: job.resolved_model ?? job.model, session_id: job.session_id,
+      execution: outcome.execution, problem: compact.error,
+      answer: { text: job.summary || '', output_truncated: Boolean(job.output_truncated) },
+      evidence: { ...compact.evidence, ...outcome.evidence },
+      verification: { ...outcome.verification, checks, check_count: compact.check_count,
+        checks_truncated: checks.length < compact.check_count },
+      policy: { ...outcome.policy, scope_status: job.scope_status, blockers,
+        blocker_count: job.blockers?.length || 0, blockers_truncated: JSON.stringify(blockers) !== JSON.stringify(job.blockers || []),
+        out_of_scope: job.out_of_scope?.slice(0, 16) ?? null, out_of_scope_count: job.out_of_scope?.length ?? null },
+      acceptance: outcome.acceptance, task_accepted: false,
+      changed_files: compact.changed_files, changed_file_count: compact.changed_file_count,
+      details_truncated: compact.details_truncated || (job.blockers?.length || 0) > 16 || (job.out_of_scope?.length || 0) > 16,
+      source: compact.source,
+      ...(job.review ? { review: { base_sha: job.review.base_sha, head_sha: job.review.head_sha,
+        complete: job.review.complete, packet_sha256: job.review.packet_sha256, comparison_id: job.review.comparison_id } } : {}),
+      artifacts: { record: job.artifacts?.record || path.join(this.root, 'jobs', job.job_id, 'job.json'),
+        before: job.artifacts?.before, after: job.artifacts?.after },
+    };
   }
 
   async load(id) {
@@ -551,31 +749,51 @@ export class SessionManager {
     return !job.runner_identity || await processIdentity(job.runner_pid) === job.runner_identity;
   }
 
-  async wait({ job_id, after_cursor = 0, wait_seconds = 10 }) {
-    const cursor = integer(after_cursor, 0, Number.MAX_SAFE_INTEGER, 'after_cursor');
-    const seconds = integer(wait_seconds, 10, 30, 'wait_seconds');
-    const until = Date.now() + seconds * 1000;
-    let job;
-    do {
-      job = await this.load(job_id);
-      if ((job.cursor || 0) > cursor || (terminal.has(job.state) && !job[internal]?.finalizing) || job[internal]?.finished || job.pending_requests?.length || Date.now() >= until) break;
-      await delay(Math.min(200, until - Date.now()));
-    } while (true);
-    return this.view(job, cursor);
+  checkWait(signal) {
+    waitCancelled(signal);
+    if (this.closed) throw fault('BRIDGE_CLOSED', 'The bridge is shutting down; discover the worker before waiting again.');
   }
 
-  async waitMany({ jobs, wait_seconds = 10 }) {
-    if (!Array.isArray(jobs) || !jobs.length || jobs.length > 32) throw fault('INVALID_WAIT', 'Wait on 1–32 jobs.');
-    if (new Set(jobs.map(item => item.job_id)).size !== jobs.length) throw fault('INVALID_WAIT', 'Wait targets must have distinct job IDs.');
-    const seconds = integer(wait_seconds, 10, 30, 'wait_seconds');
+  async wait(args, { signal } = {}) {
+    const { job_id } = args;
+    const { mode, cursor, seconds, token } = waitOptions(args);
     const until = Date.now() + seconds * 1000;
-    let results;
     do {
-      results = await Promise.all(jobs.map(item => this.wait({ ...item, wait_seconds: 0 }).catch(error => ({ job_id: item.job_id, state: 'error', error: { code: error.code, message: error.message } }))));
-      if (results.some((result, i) => result.state === 'error' || result.cursor > (jobs[i].after_cursor || 0) || terminal.has(result.state) || result.pending_requests?.length) || Date.now() >= until) break;
-      await delay(Math.min(200, until - Date.now()));
+      this.checkWait(signal);
+      const job = await this.load(job_id);
+      this.checkWait(signal);
+      if (mode === 'quiet') {
+        const snapshot = this.quietView(job, cursor, token);
+        if (snapshot.wake_reason !== 'timeout' || Date.now() >= until) return snapshot;
+      } else if ((job.cursor || 0) > cursor || (terminal.has(job.state) && !job[internal]?.finalizing) || job[internal]?.finished || job.pending_requests?.length || Date.now() >= until) {
+        return this.view(job, cursor);
+      }
+      await waitDelay(Math.min(200, until - Date.now()), signal);
     } while (true);
-    return { jobs: results, capacity: this.describe() };
+  }
+
+  async waitMany({ jobs, wait_seconds = 10, mode = 'progress' }, { signal } = {}) {
+    if (!Array.isArray(jobs) || !jobs.length || jobs.length > 32) throw fault('INVALID_WAIT', 'Wait on 1–32 jobs.');
+    if (jobs.some(item => !item || typeof item !== 'object')) throw fault('INVALID_WAIT', 'Each wait target must identify a job.');
+    if (new Set(jobs.map(item => item.job_id)).size !== jobs.length) throw fault('INVALID_WAIT', 'Wait targets must have distinct job IDs.');
+    const { seconds } = waitOptions({ mode, wait_seconds });
+    for (const item of jobs) waitOptions({ ...item, mode, wait_seconds: 0 });
+    const until = Date.now() + seconds * 1000;
+    do {
+      this.checkWait(signal);
+      const results = await Promise.all(jobs.map(item => this.wait({ ...item, mode, wait_seconds: 0 }, { signal }).catch(error => {
+        if (error.code === 'WAIT_CANCELLED' || error.code === 'BRIDGE_CLOSED') throw error;
+        return { job_id: item.job_id, state: 'error', error: { code: error.code, message: error.message } };
+      })));
+      this.checkWait(signal);
+      const actionable = mode === 'quiet'
+        ? results.find(result => result.state === 'error' || result.wake_reason !== 'timeout')
+        : results.find((result, i) => result.state === 'error' || result.cursor > (jobs[i].after_cursor || 0) || terminal.has(result.state) || result.pending_requests?.length);
+      if (actionable || Date.now() >= until) {
+        return { jobs: results, ...(mode === 'quiet' ? { mode, wake_reason: actionable?.state === 'error' ? 'error' : actionable?.wake_reason || 'timeout' } : {}), capacity: this.describe() };
+      }
+      await waitDelay(Math.min(200, until - Date.now()), signal);
+    } while (true);
   }
 
   async list({ assignment_id, limit = 20, cursor } = {}) {
@@ -609,6 +827,7 @@ export class SessionManager {
       attachments: args.attachments ?? [],
       ...(args.owned_paths !== undefined ? { owned_paths: args.owned_paths } : {}),
       ...(args.checks !== undefined ? { checks: args.checks } : {}),
+      ...(args.review !== undefined ? { review: args.review } : {}),
     };
     const operation = this.start(assignment, previous);
     this.starting.add(operation);

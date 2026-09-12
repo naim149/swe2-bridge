@@ -1,6 +1,6 @@
 # Verification and current limits
 
-Version 0.2 is an experimental local session-worker integration. The checks below used real Devin/SWE-2 calls, disposable Git worktrees, local child processes, and real MCP connections. They establish the observed behavior, not exhaustive reliability or a model benchmark.
+Version 0.3 is an experimental local session-worker integration. The checks below used real Devin/SWE-2 calls, disposable Git worktrees, local child processes, and real MCP connections. Version 0.2 evidence is retained separately from the new qualification. These checks establish observed behavior, not exhaustive reliability or a model benchmark.
 
 ## Environment
 
@@ -16,7 +16,53 @@ Maintainer verification on September 12, 2026:
 
 Only macOS runtime support is verified. Linux is experimental; Windows is unsupported. Linux source CI is not evidence of Linux Devin runtime compatibility. The original integration trials used Medium. Max was additionally checked for read-only turn continuity and session contention as described below; High inference remains unverified. Catalog visibility is neither successful inference nor a price guarantee.
 
-## Real session trials
+## Version 0.3 review and report qualification
+
+An isolated public-installer build, `0.3.0+codex.b56bacea93c6a4cddb1b`, exposed all ten tools through a real MCP stdio connection. Exact `swe-2-max` performed two bounded disposable tasks:
+
+| Scenario | Observed result |
+| --- | --- |
+| Missing comparison | Preflight rejected a missing commit with `ready: false` and `review.complete: false` before checking the CLI or submitting inference. |
+| Prepared immutable review | The committed comparison introduced a pagination offset bug, while the dirty working copy contained the correct code and a different root instruction file. Using only the packet, the worker returned the correct line-level finding, concrete input/output examples, both exact commit IDs, and both immutable root/nested instruction markers. No worker tool calls or file changes were observed. |
+| Packet identity | Preflight and the final report agreed on the comparison and packet hashes. Dirty fixture files remained byte-for-byte unchanged. |
+| Evicted events and restart | The review generated 449 events; only cursors 194–449 remained. Quiet output truthfully reported a cursor gap. The full retained answer was still retrieved, and a fresh bridge instance returned an identical report. |
+| Real denied check | A second job requested `node --version` with one-time approval. The fixture denied it. The model still returned the exact file marker and correctly reported that the check did not run. The report retrieved successfully with legacy `job_state: blocked`, execution `completed`, policy `blocked_actions`, verification `incomplete`, the `PERMISSION_DENIED` blocker, and `task_accepted: false`. No files changed. |
+| Quiet acknowledgment | Passing the terminal `next_token` suppressed the repeated handoff for both jobs. |
+
+The packet trial qualifies one small text comparison and its instructions, not arbitrary PR review quality. The worker explicitly described missing wider semantic context. Subsequent diagnostic fixes carry restricted snapshot coverage into final reports and enforce the 16 KiB handoff limit even for JSON-escaped metadata; those are covered by the regression and independent review below.
+
+A fresh ephemeral Codex task then qualified the final runtime from personal installation `0.3.0+codex.20260912151250`, whose runtime source hashes matched the reviewed source. It invoked the actual installed `devin_preflight`, `devin_run`, quiet `devin_wait`, and two `devin_report` calls. The new exact-Max review again found the committed pagination bug and both instruction markers with zero worker tool calls or edits. Codex also retrieved the earlier denied-check report successfully without rerunning it and kept acceptance pending. The temporary isolated authentication copy was removed afterward.
+
+The current source/regression suite passes 96 tests without Devin inference. It includes the version 0.2 baseline plus real Git SHA-1/SHA-256 fixtures, changed-file/instruction and byte limits, binary/LFS/gitlink/symlink blockers, exact immutable identity, dirty/divergent checkout handling, quiet modes/cursors/tokens/cancellation, durable reports, native-evidence provenance, early-blocked follow-ups, and legacy report handling. Real SDK/stdio tests verify tool schemas and successful report retrieval after a blocked job. No fake Devin executable or network inference is used by regression tests or CI.
+
+Independent review found and resolved configured Git helpers executing during review snapshots, lost early-start check declarations, incorrect classification of unstarted follow-ups, legacy report ambiguity, dropped reduced-coverage explanations, and a JSON-escaping handoff bound. Real Git controls invoked filesystem monitors/conversion filters; restricted packet and snapshot reads invoked none. Filter and submodule exclusions remain incomplete evidence with explicit limitations through snapshots, assessment, reports, and quiet handoffs. Custom hunk-function configuration and info-attributes driver changes no longer alter packet identity. Non-review snapshot behavior remains unchanged.
+
+## Quiet waits on the actual Codex host
+
+A development installation with version `0.2.0+codex.c7f940291362e54b8d11` qualified the new wait behavior before final version 0.3 packaging. Its source hashes and raw records are retained privately. One exact `swe-2-max` job used a disposable repository and a sole declared 300-second Node timer check. Two real MCP SDK clients observed the same job for approximately 168.4 seconds, both with `wait_seconds: 55` and a 75-second timeout:
+
+| Mode | Returned MCP results | Serialized UTF-8 JSON bytes |
+| --- | --- | --- |
+| Progress | 8 | 122,640 |
+| Quiet | 4 | 7,378 |
+
+Quiet returned three bounded timeouts and one terminal handoff. This measures result count and returned serialized bytes for one fixture, not account token usage, general savings, or a model-quality benchmark. Later version 0.3 reporting fixes change some returned fields, so these byte totals describe that recorded qualification build.
+
+An ephemeral Codex app-server task loaded the installed plugin and exercised the actual host:
+
+| Probe | Observed result |
+| --- | --- |
+| Direct MCP quiet wait | Successfully held for 55,053 ms under configured tool timeout 75 seconds. |
+| Concurrent host request | `thread/loaded/list` completed in less than the 1 ms measurement resolution while the wait was held. |
+| Steering a waiting model turn | RPC accepted in 1 ms; steered message acknowledged 56,122 ms later, after the held wait finished. Steering was queued. |
+| Interrupting a waiting model turn | Turn interruption returned in 4 ms; a subsequent status query took 9 ms and the Max job remained running. |
+| Explicit fixture job cancellation | Quiet terminal wake arrived in 466 ms; source was unchanged and both worker/check process groups were gone. |
+
+The host trial proves a 55-second call works; it does not locate the exact host timeout boundary. No MCP item-completion event appeared for the interrupted wait, so host-level propagation/timing of the server's abort signal was not independently proven. A separate real SDK/stdio regression observes the unchanged server wait settling with internal `WAIT_CANCELLED`, no active wait handler, and unchanged worker records. MCP suppresses cancelled tool responses; the caller receives its SDK/host cancellation result.
+
+There is no new background scheduler or verified unsolicited agent-wakeup channel. A caller must issue another bounded wait, or retrieve the durable result later. Use shorter waits when queued steering latency matters. These tests used only disposable state and an isolated Codex configuration; the temporary authentication copy was removed.
+
+## Version 0.2 real session trials
 
 | Scenario | Observed result |
 | --- | --- |
@@ -63,9 +109,9 @@ Separate disposable probes used the unchanged production bridge and exact `swe-2
 
 No bridge cleanup race was reproduced, and no shutdown, routing, or automatic-retry change was made. The worker contract and setup guide now explain competing session ownership and explicit recovery. These Max probes qualify this limited lifecycle behavior, not engineering quality, long assignments, or broad equivalence with other models. Exact recovery rules for leftover provider PID files remain unverified; file presence alone is not live-process evidence.
 
-## Focused regression coverage
+## Version 0.2 regression baseline
 
-`npm test` runs 30 tests using real files, Git repositories, and local child processes. It needs no Devin installation, account, mocked Devin executable, or model inference. Coverage includes:
+The merged version 0.2 baseline ran 30 tests using real files, Git repositories, and local child processes. It needed no Devin installation, account, mocked Devin executable, or model inference. Coverage included:
 
 - Exact-model validation, ownership paths, symlink/hard-link escape rejection, check references, attachment frame limits, file limits, and Git evidence across dirty/index/committed states.
 - Durable command ownership before an execution gate opens, failed persistence, owner death before the gate, check deadlines, cancellation, descendant cleanup, release/session isolation, and a 32-start limit.

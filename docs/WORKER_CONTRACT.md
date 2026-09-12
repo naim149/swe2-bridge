@@ -1,6 +1,6 @@
 # Worker contract
 
-Version 0.2 makes Devin an additional session-based worker in an existing orchestration graph. The Lead selects workers using the caller's current task, role, and model rules. The bridge adds no selection priority, routing tier, or native Codex model-picker entry.
+Devin is an additional session-based worker in an existing orchestration graph. Version 0.3 extends the version 0.2 assignment contract with optional prepared reviews, quiet waits, and durable reports. The Lead selects workers using the caller's current task, role, and model rules. The bridge adds no selection priority, routing tier, or native Codex model-picker entry.
 
 This document describes the implemented contract. Consult [VERIFICATION.md](../VERIFICATION.md) for observed results and qualification gaps.
 
@@ -21,6 +21,7 @@ Use the canonical checkout root as `cwd`. Supply an exact 40- or 64-character Gi
 | `model` | Exactly `swe-2-medium`, `swe-2-high`, or `swe-2-max`; default `swe-2-medium`. |
 | `role`, `scope` | Existing orchestration role and additional assignment constraints. |
 | `base_sha` | Optional exact expected Git HEAD. |
+| `review` | Optional immutable comparison `{base_sha, head_sha}` for a `read` assignment; distinct from checkout HEAD. |
 | `profile`, `owned_paths` | Execution policy and literal owned files/directories. |
 | `checks` | Exact verification commands, directories, execution owners, deadlines, and approval policy. |
 | `acceptance` | Criteria with IDs, descriptions, and references to declared check IDs. |
@@ -30,6 +31,42 @@ Use the canonical checkout root as `cwd`. Supply an exact 40- or 64-character Gi
 | `timeout_seconds` | Per-turn deadline, 1–3600 seconds; default 900. |
 
 `devin_preflight` takes the same assignment as `devin_run` and submits no inference. It checks account authentication, live model catalog visibility, source assumptions, trust, attachment readiness, and policy. Catalog presence does not guarantee successful inference. The real session must also support the required input capabilities and confirm the selected model.
+
+## Prepared Git reviews
+
+When assigning a commit or PR review, resolve the intended base and head with the Lead's existing Git/repository capabilities, then supply their full immutable commit IDs. The bridge does not infer a PR's merge base, fetch missing objects, or treat a moving branch name as the comparison. Add the following field to a `read` assignment:
+
+```json
+{
+  "review": {
+    "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}
+```
+
+Substitute real 40- or 64-character commit IDs. The outer assignment `base_sha` still asserts the current checkout HEAD; it need not equal either comparison commit. `review.base_sha` and `review.head_sha` define a direct two-commit comparison. Dirty files and the current checkout are separate observations and never replace those immutable inputs.
+
+Preparation reads local Git objects and embeds the actual diff, every changed path with old/new blob identity, and applicable tracked `AGENTS.md` content from the comparison head. Root and nested instructions cover changed, renamed, and deleted paths; no working-tree or base-revision instructions are silently substituted. Caller and higher-priority instructions still apply. The packet uses Git with external diff/text conversion disabled and requires support for `--attr-source` so attributes come from the comparison head.
+
+Review preparation and its before/after workspace snapshots disable configured hooks, filesystem monitors, conversion filters, and implicit fetches. Local custom function-header settings are disabled and optional hunk function labels are removed so they cannot shape the immutable diff. Snapshot reads skip submodule interiors; if submodules or disabled conversion filters reduce normal observation, workspace evidence remains incomplete. That workspace limitation is separate from whether the two-commit packet itself is complete. Assignments without `review` retain their existing snapshot behavior.
+
+Successful preflight returns `review.complete: true`, `comparison_id`, `packet_sha256`, coverage, limits, and the comparison identities. The packet hash covers immutable evidence; `content_sha256` also covers the separately labeled checkout observations included in the submitted content. Submission prepares the evidence again and rejects a changed immutable packet. The job persists its review identity and the actual submitted content in private artifacts.
+
+If comparison objects are missing, not commits, identical in tree content, unsupported, or over budget, preflight returns `ready: false` with `review.complete: false` and a specific blocker before any model task. No partial packet is accepted. The initial text-review limits are:
+
+| Evidence | Limit |
+| --- | --- |
+| Changed paths | 128 |
+| Each changed blob | 256 KiB; 4 MiB total unique blobs inspected |
+| Complete diff | 512 KiB, with three lines of context |
+| Applicable instructions | 64 files; 64 KiB each; 256 KiB total |
+| Serialized packet | 1 MiB |
+| Preparation | 20 seconds total, with bounded individual Git commands |
+
+Binary or invalid UTF-8 content, Git LFS pointers, changed gitlinks/submodules, non-regular applicable instruction files, and partial/promisor clones are rejected. Additional path and metadata limits are reported in `review.limits`. Materialize missing objects separately, or deliberately scope another comparison; do not describe omitted work as reviewed.
+
+`complete` describes the bounded comparison packet, not a complete repository snapshot or proof of correctness. Full unchanged context and complete changed-file bodies are not embedded. If the reviewer needs more semantic context, supply authorized references or return a specific limitation before claiming full coverage. Review preparation grants no worker-facing Git/history tools, shell execution, edits, or network access; `read` profile restrictions remain in force.
 
 ## Profiles, owned paths, and checks
 
@@ -105,7 +142,57 @@ Concurrent bridge jobs require independent checkouts; the same canonical checkou
 
 ## Progress and attention
 
-Call `devin_wait` with `job_id`, `after_cursor` (initially 0), and `wait_seconds` (0–30; default 10). Pass the returned `next_cursor` as the next `after_cursor`. If `events_remaining` is true, drain the next page. `cursor_gap` indicates that earlier events are no longer retained. `devin_wait_many` accepts 1–32 distinct job/cursor pairs and returns a separate result for each.
+Call `devin_wait` with `job_id`, `after_cursor` (initially 0), and `wait_seconds` (0–55; default 10). The default `mode: "progress"` preserves normal transcript delivery. Pass the returned `next_cursor` as the next `after_cursor`. If `events_remaining` is true, drain the next page. `cursor_gap` indicates that earlier events are no longer retained. `devin_wait_many` accepts 1–32 distinct job/cursor pairs and returns a separate result for each.
+
+Opt into `mode: "quiet"` when you need a compact wait for a new terminal outcome or actionable pending request. Ordinary progress events do not wake that wait. It also returns on an error or the bounded timeout. The response includes compact job state, `next_token`, `changed`, and `wake_reason`; it omits transcript events and the ordinary cumulative summary. A changed terminal state includes a bounded final handoff and a durable artifact reference. A terminal state already acknowledged by its token omits that repeated handoff.
+
+`wake_reason` explains why the call returned (`terminal`, `attention`, or `timeout`; a multi-job load failure uses `error`). `changed` means the compact state differs from the acknowledged token, so a first active snapshot can have `changed: true` with `wake_reason: "timeout"`. Later recorded verification or other final-report evidence changes invalidate a terminal token. Event-only progress does not.
+
+Keep the two acknowledgment mechanisms separate:
+
+| Value | Purpose |
+| --- | --- |
+| `after_cursor` / `next_cursor` | Transcript delivery position. Quiet leaves `next_cursor` equal to the supplied `after_cursor`, so no events are consumed. |
+| `cursor` | Latest server event position, which may advance during a quiet wait. Do not use it to skip unseen transcript events. |
+| `after_token` / `next_token` | Acknowledgment of one job's compact state. Tokens are opaque 64-character lowercase hexadecimal values. |
+
+For a first quiet wait, omit `after_token`. After handling its result, pass that job's returned `next_token` as `after_token` on the next quiet wait. Keep the previous transcript cursor unchanged. For example:
+
+```json
+{
+  "job_id": "<returned-job-id>",
+  "mode": "quiet",
+  "after_cursor": 0,
+  "wait_seconds": 55
+}
+```
+
+For `devin_wait_many`, set `mode` on the whole call and put each `after_token` inside its matching `jobs[]` item alongside `after_cursor`. After the first response, substitute each actual returned token in the next call:
+
+```json
+{
+  "mode": "quiet",
+  "wait_seconds": 55,
+  "jobs": [
+    {
+      "job_id": "<first-job-id>",
+      "after_cursor": 0,
+      "after_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "job_id": "<second-job-id>",
+      "after_cursor": 0,
+      "after_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}
+```
+
+Remove completed jobs from a continuing wait set, or acknowledge their returned terminal token. Leaving a terminal state unacknowledged causes it to be delivered again. Acknowledging attention means it has been seen; it does not answer the request. Handle `needs_permission`/`needs_input` with `devin_respond` as described below. Use progress mode from the preserved transcript cursor, or inspect the durable artifact records, when you need full diagnostics. Quiet mode retains truthful `cursor_gap` and truncation indicators; compact output does not erase missing evidence.
+
+Cancelling a wait stops only that wait, leaving its worker running. The manager rejects internally with `WAIT_CANCELLED`; MCP suppresses the cancelled response, so the caller receives its SDK/host cancellation result instead of a tool payload with that code. A closing manager reports `BRIDGE_CLOSED` when the transport can still deliver it. Use `devin_cancel` to cancel the job. The plugin's MCP tool timeout is 75 seconds to allow the maximum 55-second wait plus transport and cleanup overhead.
+
+On the qualified Codex host, steering a model turn during a held wait was queued until the call finished; explicit turn interruption returned promptly and left the worker running. Shorter waits remain available when that steering delay matters. These are bounded request/response waits, with no promise of a background agent wakeup or automatic resumption after the caller's turn ends. See [host qualification](../VERIFICATION.md) for measured behavior and its limits.
 
 `devin_list` discovers persisted jobs and optionally filters by assignment ID. Its `next_cursor` is an opaque pagination token, separate from each job's numeric event cursor. Listing is for recovery, not a signal to rerun work.
 
@@ -136,7 +223,7 @@ Once a turn has finished, continue the same session with the next consecutive re
 }
 ```
 
-Send this object to `devin_message`, then follow the **new** job ID it returns. Omitted `owned_paths` and `checks` preserve the prior assignment. Omitted `base_sha` uses the prior observed after-HEAD when available, otherwise the previous source expectation; inspect source assumptions before continuation. Attachments default to none for the new message and must be explicitly supplied when needed. Model, execution profile, resources, and acceptance remain the assignment's existing values.
+Send this object to `devin_message`, then follow the **new** job ID it returns. Omitted `owned_paths`, `checks`, and `review` preserve the prior assignment. Supply a new explicit `review` pair to review another comparison; it is never inferred from a moved checkout. Omitted `base_sha` uses the prior observed after-HEAD when available, otherwise the previous source expectation; inspect source assumptions before continuation. Attachments default to none for the new message and must be explicitly supplied when needed. Model, execution profile, resources, and acceptance remain the assignment's existing values.
 
 Cancel with `devin_cancel` when work should stop. Timeout, cancellation, interruption, and incomplete results preserve changes. Before continuing any non-completed turn, inspect the workspace/evidence and explicitly set `acknowledge_partial_work: true` in the follow-up. This is acknowledgment of reviewed work, not permission to discard it.
 
@@ -146,7 +233,30 @@ Devin permits only one ACP process to hold a session at a time. Devin desktop or
 
 ## Verification and acceptance
 
-A worker turn ending is not task acceptance. Review the final answer, scope status, changed files, source evidence, blockers, and each check. `task_accepted` remains false. Incomplete evidence or output must not become a clean-success claim.
+After the turn finishes, call `devin_report` with its `job_id`. The report is projected from durable `job.json`, independently of the 256-event rolling buffer, and remains retrievable after restarting the bridge. It contains the retained answer (up to the existing 32,768-character text retention limit) and current evidence; it does not reconstruct evicted or truncated text. `answer.output_truncated` remains visible. Active/finalizing jobs return `JOB_ACTIVE`.
+
+```json
+{"job_id":"<returned-job-id>"}
+```
+
+The report keeps these decisions separate:
+
+| Field | Interpretation |
+| --- | --- |
+| `job_state` | Existing terminal state, preserved for compatibility. |
+| `execution.status` | Whether execution completed, failed, was refused, interrupted/cancelled/timed out, or never started. |
+| `evidence.completeness` | Completeness of observed workspace evidence, with reasons for limitations. |
+| `policy.status` | Clear, blocked actions, scope violation, or unknown; blockers remain inspectable. |
+| `verification.status` | Complete, failed, incomplete, or no checks declared; each check retains its evidence source. |
+| `acceptance.status` | `pending_lead_review`; `task_accepted: false` is pending acceptance, not an automatic failed-work verdict. |
+
+A turn that ends normally but encounters a denied command can retain legacy `job_state: "blocked"` while reporting `execution.status: "completed"`, its useful answer, and `policy.status: "blocked_actions"`. Retrieving that report succeeds as an MCP call. This does not erase the denial or establish that the answer meets the assignment. Similarly, incomplete evidence or scope violations remain visible after execution ends. `problem` retains the compact execution/problem error when present.
+
+New jobs record whether this revision attempted a prompt. A preflight-blocked follow-up remains `not_started` even though it retains the earlier session ID; its declared checks remain `not_run` rather than disappearing. Version 0.1 reports are marked `legacy: true`; their recorded successful execution can be reported, while missing newer scope/evidence fields remain unknown.
+
+Progress responses and changed terminal quiet responses also include an additive `outcome` with these separate classifications. Quiet handoffs cap their serialized content at 16 KiB, with a summary tail of at most 4 KiB. Reports return the full retained answer and bounded diagnostic previews; inspect truncation/count fields and referenced private records for additional detail. Native evidence recorded after completion appears in the next report and invalidates the prior quiet acknowledgment token.
+
+Review the answer, scope, source, each check, and acceptance criteria before accepting the task. The bridge leaves acceptance to the Lead. Incomplete evidence or output must not become a clean-success claim.
 
 For checks executed through bridge terminals, evidence records the command, actual cwd, process/exit status, timing, source snapshot hashes, and bounded output artifacts. A later observed source change marks passed proof `stale`; changed or missing source during the check leaves proof `unknown`. The historical exit code is retained. A native handoff remains unrun until the named executor does the work. After the turn finishes, record that actual result with `devin_record_check`:
 
