@@ -201,8 +201,8 @@ export function bindChecksToSource(checks, after) {
 export class SessionManager {
   constructor({ root, maxWorkers } = {}) {
     this.root = path.resolve(root || process.env.DEVIN_BRIDGE_STATE_DIR || path.join(os.homedir(), '.local/share/devin-bridge'));
-    this.maxWorkers = Number(maxWorkers ?? process.env.DEVIN_BRIDGE_MAX_WORKERS ?? 3);
-    if (!Number.isInteger(this.maxWorkers) || this.maxWorkers < 1 || this.maxWorkers > 3) throw fault('INVALID_CAPACITY', 'DEVIN_BRIDGE_MAX_WORKERS must be from 1 to 3.');
+    this.maxWorkers = Number(maxWorkers ?? process.env.DEVIN_BRIDGE_MAX_WORKERS ?? 4);
+    if (!Number.isInteger(this.maxWorkers) || this.maxWorkers < 1 || this.maxWorkers > 4) throw fault('INVALID_CAPACITY', 'DEVIN_BRIDGE_MAX_WORKERS must be from 1 to 4.');
     this.defaultModel = process.env.DEVIN_BRIDGE_MODEL || 'swe-2-medium';
     this.locker = new JobManager();
     this.locker.root = this.root;

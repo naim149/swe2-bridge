@@ -90,7 +90,7 @@ async function invoke(operation) {
 async function main() {
   const manager = new SessionManager();
   const server = new McpServer(
-    { name: 'devin-bridge', version: '0.3.0' },
+    { name: 'devin-bridge', version: '0.3.1' },
     {
       instructions: [
         'Devin CLI is an available worker for delegated engineering tasks.',
@@ -101,7 +101,7 @@ async function main() {
         'Use devin_run once, then devin_wait or devin_wait_many with returned job IDs and event cursors; use devin_list to recover existing assignments instead of blindly replaying work.',
         'Waits default to progress mode. Opt into quiet mode for compact waits that ignore ordinary progress and wake for new terminal outcomes or actionable requests, errors, or timeout. Pass each returned next_token as that job\'s after_token; remove completed jobs or acknowledge their terminal state. Quiet preserves transcript cursors for later progress diagnostics.',
         'Use devin_message for an explicit revision or follow-up in the existing session, and acknowledge any partial work before resuming an interrupted assignment.',
-        'The shared bridge pool allows at most three independent jobs. The Lead counts native and external workers together under the existing delegation limits and coordinates file and resource ownership.',
+        'The shared bridge pool allows at most four independent jobs. The Lead counts native and external workers together under the existing delegation limits and coordinates file and resource ownership.',
         'The bridge enforces owned paths for delegated filesystem writes and exact permissions for declared check commands. These controls are not an operating-system sandbox.',
         'needs_permission and needs_input require attention. devin_respond can approve once only an offered allowed declared check, deny it, or answer a requested form. Unknown commands need an amended assignment or a native-executor handoff.',
         'Codex tools, private conversation context, other agents, and device or browser capabilities are not inherited by Devin; supply the required context explicitly.',
@@ -127,7 +127,7 @@ async function main() {
 
   server.registerTool('devin_run', {
     title: 'Run Devin worker',
-    description: 'Start or recover a durable Devin assignment. Returns a job_id promptly; collect events and results with the wait tools. Edit profiles require owned_paths; only edit_check permits exact declared commands assigned to Devin. At most three independent bridge jobs share the pool.',
+    description: 'Start or recover a durable Devin assignment. Returns a job_id promptly; collect events and results with the wait tools. Edit profiles require owned_paths; only edit_check permits exact declared commands assigned to Devin. At most four independent bridge jobs share the pool.',
     inputSchema: assignmentSchema,
     annotations: {
       readOnlyHint: false,

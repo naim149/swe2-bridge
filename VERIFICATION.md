@@ -16,6 +16,16 @@ Maintainer verification on September 12, 2026:
 
 Only macOS runtime support is verified. Linux is experimental; Windows is unsupported. Linux source CI is not evidence of Linux Devin runtime compatibility. The original integration trials used Medium. Max was additionally checked for read-only turn continuity and session contention as described below; High inference remains unverified. Catalog visibility is neither successful inference nor a price guarantee.
 
+## Version 0.3.1 four-worker capacity
+
+The shared default and maximum are four; explicitly configured limits from one to four remain supported. Local macOS regression checks passed 101 tests with no inference, including 18 focused session/MCP checks. Source syntax checks also passed.
+
+The new fixture holds four live local ACP workers across two managers and distinct Git checkouts, rejects a fifth before prompt submission, preserves same-checkout exclusion, and reuses a cancelled job's released slot. A real MCP stdio connection separately confirms default capacity four, a configured lower cap, and refusal when four slots are held by another process. Invalid capacities fail closed. Test managers close before fixture directories are removed.
+
+The standalone installer succeeded with the shipped four-slot configuration in an isolated Codex home; an override of five was rejected before installation. The staged MCP server reported version 0.3.1 and capacity four. This includes correction of the installer's previous three-slot validation.
+
+These are local protocol/locking fixtures, not four concurrent real SWE-2 engineering jobs or a throughput benchmark. Existing sessions may retain an older three-slot runtime until refreshed. The caller still counts native and external workers together and owns native resource coordination.
+
 ## Version 0.3 review and report qualification
 
 An isolated public-installer build, `0.3.0+codex.b56bacea93c6a4cddb1b`, exposed all ten tools through a real MCP stdio connection. Exact `swe-2-max` performed two bounded disposable tasks:

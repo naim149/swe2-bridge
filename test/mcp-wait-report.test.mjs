@@ -14,7 +14,7 @@ const managerUrl = new URL('../src/session-manager.mjs', import.meta.url).href;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const posix = { skip: process.platform === 'win32' ? 'POSIX-only bridge' : false, timeout: 15000 };
 
-async function fixture(t) {
+async function fixture(t, prepare) {
   const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'swe2-mcp-wait-report-')));
   const root = path.join(directory, 'state');
   const cwd = path.join(directory, 'workspace');
@@ -48,10 +48,14 @@ SessionManager.prototype.wait = function (...args) {
 };
 `, { mode: 0o600 });
 
+  const env = { DEVIN_BRIDGE_STATE_DIR: root, DEVIN_BRIDGE_MAX_WORKERS: '1',
+    DEVIN_CLI_PATH: path.join(directory, 'devin-is-intentionally-unavailable') };
+  for (const [key, value] of Object.entries((await prepare?.({ directory, root, cwd })) ?? {})) {
+    if (value === null) delete env[key];
+    else env[key] = value;
+  }
   const transport = new StdioClientTransport({ command: process.execPath,
-    args: ['--import', observer, serverFile], cwd: path.dirname(path.dirname(serverFile)), stderr: 'pipe',
-    env: { DEVIN_BRIDGE_STATE_DIR: root, DEVIN_BRIDGE_MAX_WORKERS: '1',
-      DEVIN_CLI_PATH: path.join(directory, 'devin-is-intentionally-unavailable') } });
+    args: ['--import', observer, serverFile], cwd: path.dirname(path.dirname(serverFile)), stderr: 'pipe', env });
   const client = new Client({ name: 'local-wait-report-regression', version: '1.0.0' }, { capabilities: {} });
   let stderr = '';
   transport.stderr?.on('data', data => { stderr = `${stderr}${data.toString()}`.slice(-8192); });
@@ -117,7 +121,7 @@ SessionManager.prototype.wait = function (...args) {
     } while (performance.now() < until);
     assert.fail(`Missing server observation: ${label}. ${stderr}`);
   };
-  return { client, add, cwd, observation, readObservations };
+  return { client, add, cwd, root, directory, observation, readObservations };
 }
 
 function structured(result) {
@@ -153,6 +157,8 @@ test('real MCP stdio exposes quiet waits and durable reports and releases cancel
       assert.equal(pattern.test('a'.repeat(64)), true);
       for (const invalid of ['a'.repeat(63), 'a'.repeat(65), 'A'.repeat(64), 'g'.repeat(64)]) assert.equal(pattern.test(invalid), false);
     }
+    const listed = await call('devin_list', {});
+    assert.equal(structured(listed).capacity.max_external_workers, 1);
     const tooLong = await call('devin_wait', { job_id: active.id, mode: 'quiet', wait_seconds: 56 });
     assert.equal(tooLong.isError, true);
     const invalidToken = await call('devin_wait', { job_id: active.id, mode: 'quiet', wait_seconds: 0, after_token: 'A'.repeat(64) });
@@ -212,5 +218,57 @@ test('real MCP stdio exposes quiet waits and durable reports and releases cancel
     const finished = new Set(observed.filter(event => event.type === 'settled').map(event => event.id));
     assert.ok(observed.filter(event => event.type === 'started').every(event => finished.has(event.id)));
     assert.equal(observed.at(-1).active, 0);
+  });
+});
+
+test('a default-capacity MCP server advertises four shared slots and refuses a fifth run before inference', posix, async t => {
+  const { client, cwd, root } = await fixture(t, async ({ directory }) => {
+    // Local preflight-only fixture CLI: it answers --version, auth status, and
+    // the model catalog so readiness genuinely passes inside the spawned
+    // server. It is not a Devin backend; the acp mode is never reached here.
+    const cli = path.join(directory, 'fake-devin');
+    await fs.writeFile(cli, `#!/bin/sh
+case "$1" in
+  --version) echo 'devin-fixture 0.0.0';;
+  auth) echo 'logged in as fixture@example.invalid';;
+  models) echo '{"families":[{"variants":[{"model_uid":"swe-2-medium","label":"Fixture"},{"model_uid":"swe-2-high","label":"Fixture"},{"model_uid":"swe-2-max","label":"Fixture"}]}]}';;
+  *) exec sleep 3600;;
+esac
+`, { mode: 0o700 });
+    return { DEVIN_CLI_PATH: cli, DEVIN_BRIDGE_MAX_WORKERS: null };
+  });
+
+  await t.test('the advertised shared pool and devin_run description say four', async () => {
+    assert.match(client.getInstructions(), /at most four independent jobs/);
+    const listing = await client.listTools({}, { timeout: 3000 });
+    const run = listing.tools.find(tool => tool.name === 'devin_run');
+    assert.match(run.description, /At most four independent bridge jobs share the pool/);
+    const listed = structured(await client.callTool({ name: 'devin_list', arguments: {} }, undefined, { timeout: 3000 }));
+    assert.equal(listed.capacity.max_external_workers, 4);
+  });
+
+  await t.test('four externally held slots refuse a fifth devin_run before inference across processes', async () => {
+    for (let i = 0; i < 4; i++) {
+      const lock = path.join(root, 'slots', String(i));
+      await fs.mkdir(lock, { recursive: true });
+      await jsonFile(path.join(lock, 'owner.json'), { job_id: randomUUID(), runner_pid: process.pid, pid: null, pids: [] });
+    }
+    const result = await client.callTool({ name: 'devin_run', arguments: {
+      task: 'Inspect the fixture workspace.', cwd, profile: 'read', assignment_id: randomUUID(), revision: 1,
+      workspace_trust: 'acknowledged', trust_reason: 'Disposable local regression fixture.' } }, undefined, { timeout: 10000 });
+    assert.equal(result.isError, true);
+    const view = structured(result);
+    assert.equal(view.state, 'blocked');
+    assert.equal(view.error.code, 'WORKER_CAPACITY');
+    assert.equal(view.capacity.max_external_workers, 4);
+    assert.equal(view.preflight.ready, true);
+    assert.equal(view.prompt_attempted, false);
+    assert.equal(view.session_id, null);
+    assert.equal(view.resolved_model, null);
+    for (let i = 0; i < 4; i++) {
+      const owner = JSON.parse(await fs.readFile(path.join(root, 'slots', String(i), 'owner.json'), 'utf8'));
+      assert.equal(owner.runner_pid, process.pid);
+    }
+    assert.deepEqual(await fs.readdir(path.join(root, 'locks')), []);
   });
 });

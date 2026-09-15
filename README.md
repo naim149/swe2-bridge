@@ -1,6 +1,6 @@
 # SWE2 bridge for Codex
 
-Use your installed Devin CLI as an additional worker in Codex. Persistent assignments support follow-ups in the same Devin session, structured permissions, declared checks, and a shared pool of up to three independent workers. Version 0.3 adds prepared Git review comparisons, optional quiet waits, and retrievable final reports.
+Use your installed Devin CLI as an additional worker in Codex. Persistent assignments support follow-ups in the same Devin session, structured permissions, declared checks, and a shared pool of up to four independent workers. Version 0.3 adds prepared Git review comparisons, optional quiet waits, and retrievable final reports.
 
 Your existing task, role, and model-selection rules choose when to use Devin alongside native Codex agents. The plugin adds no routing priorities and does not add an entry to Codex's native model picker.
 
@@ -68,7 +68,7 @@ Assignments use one of three execution profiles:
 
 The bridge enforces delegated filesystem writes and check permissions, but it is **not an OS sandbox**. Other CLI tools, approved shell commands, and Git's evidence gaps limit isolation and observation. Review the [worker contract](docs/WORKER_CONTRACT.md) before assigning work.
 
-The shared external pool allows up to three jobs in independent checkouts. The Lead also counts native and external workers against the caller's existing budget and coordinates named resources. Stable assignment IDs and revisions prevent a repeated request from blindly rerunning the same work.
+The shared external pool allows up to four jobs in independent checkouts. The Lead also counts native and external workers against the caller's existing budget and coordinates named resources. Stable assignment IDs and revisions prevent a repeated request from blindly rerunning the same work.
 
 ## Permissions and private data
 

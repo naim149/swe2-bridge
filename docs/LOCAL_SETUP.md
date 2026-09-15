@@ -118,7 +118,7 @@ The installer records environment overrides in the generated `.mcp.json` under t
 | `CODEX_CLI_PATH` | Optional Codex executable override used by setup. |
 | `DEVIN_CLI_PATH` | Explicit Devin executable path. Otherwise resolves `devin` on `PATH`, then the known macOS app location. |
 | `DEVIN_BRIDGE_MODEL` | Default `swe-2-medium`; use exactly that model, `swe-2-high`, or `swe-2-max`. An assignment can override the default. |
-| `DEVIN_BRIDGE_MAX_WORKERS` | External pool capacity, 1–3; default 3 across bridge instances sharing state. The caller also counts native workers against its overall budget. |
+| `DEVIN_BRIDGE_MAX_WORKERS` | External pool capacity, 1–4; default 4 across bridge instances sharing state. The caller also counts native workers against its overall budget. |
 | `DEVIN_BRIDGE_STATE_DIR` | Default `~/.local/share/devin-bridge`; stores prompts, sessions, logs, job state, snapshots, and locks. |
 
 Execution policy and trust now belong to each structured assignment: `profile`, `checks`, `workspace_trust`, and `trust_reason`. Remove old permission-mode or global-trust overrides from a previous installation; they are not the version 0.2 control surface.

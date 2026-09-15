@@ -9,7 +9,7 @@ Codex orchestrator
   └─ Devin MCP tools → local ACP session → exact selected SWE-2 model
 ```
 
-The Node MCP server uses stdio. Its session manager persists assignment identity before inference, starts or resumes an ACP session, collects bounded events, applies a deadline, and coordinates bridge instances through checkout/resource locks and a shared external pool of up to three. The Lead also counts native and external workers under the caller's existing budget.
+The Node MCP server uses stdio. Its session manager persists assignment identity before inference, starts or resumes an ACP session, collects bounded events, applies a deadline, and coordinates bridge instances through checkout/resource locks and a shared external pool of up to four. The Lead also counts native and external workers under the caller's existing budget.
 
 The only accepted model IDs are `swe-2-medium`, `swe-2-high`, and `swe-2-max`; there is no alias or silent fallback. Assignment profiles are `read`, `edit`, and `edit_check`. Delegated writes are checked against explicit owned paths, and client terminal handlers enforce declared check commands and actual working directories. Trust is inherited from an exact native directory record or explicitly acknowledged by the caller for the assignment. These controls are not an OS sandbox and do not cover all built-in CLI tools.
 

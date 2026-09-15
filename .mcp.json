@@ -6,7 +6,7 @@
       "env_vars": ["HOME", "PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "DEVIN_CLI_PATH", "DEVIN_BRIDGE_STATE_DIR"],
       "env": {
         "DEVIN_BRIDGE_MODEL": "swe-2-medium",
-        "DEVIN_BRIDGE_MAX_WORKERS": "3"
+        "DEVIN_BRIDGE_MAX_WORKERS": "4"
       },
       "startup_timeout_sec": 10,
       "tool_timeout_sec": 75

@@ -1,6 +1,6 @@
 {
   "name": "swe2-bridge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Use the installed Devin CLI as an additional worker in Codex.",
   "author": {
     "name": "Naim",

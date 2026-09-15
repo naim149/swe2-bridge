@@ -39,7 +39,7 @@ Keep generated installations, dependencies, real job artifacts, and credentials 
 - Enforce ownership in delegated filesystem writes and exact declared check commands/cwds. Do not claim an OS sandbox or complete coverage of built-in CLI tools.
 - Preserve workspace changes when work fails, is interrupted, or is cancelled. Inspect them before retrying.
 - Accept only the three exact SWE-2 model IDs. Do not change model, widen an approval, alter global trust, or repeat potentially mutating work to hide a failure.
-- Preserve caller budgeting across native and external workers, and coordinate explicit resource ownership. The shared bridge pool has a separate capacity of 1–3.
+- Preserve caller budgeting across native and external workers, and coordinate explicit resource ownership. The shared bridge pool has a separate capacity of 1–4.
 - Distinguish process completion, evidence availability, and acceptance of the generated work.
 
 ## Check the behavior you change

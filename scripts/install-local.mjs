@@ -88,7 +88,7 @@ async function stagePlugin(environment) {
     // Resolve the executable even if its explicit override used a relative path.
     server.env.DEVIN_CLI_PATH = environment.paths.devin;
     if (!['swe-2-medium', 'swe-2-high', 'swe-2-max'].includes(server.env.DEVIN_BRIDGE_MODEL)) throw new Error('Select an exact SWE-2 model.');
-    if (!/^[1-3]$/.test(server.env.DEVIN_BRIDGE_MAX_WORKERS || '3')) throw new Error('DEVIN_BRIDGE_MAX_WORKERS must be from 1 to 3.');
+    if (!/^[1-4]$/.test(server.env.DEVIN_BRIDGE_MAX_WORKERS || '4')) throw new Error('DEVIN_BRIDGE_MAX_WORKERS must be from 1 to 4.');
     await writeJson(path.join(temporary, '.mcp.json'), mcp);
     await writeJson(path.join(temporary, '.codex-plugin', 'plugin.json'), manifest);
     manifest.version = `${manifest.version}+codex.${await hashTree(temporary)}`;

@@ -343,3 +343,194 @@ test('a surviving real check process retains the shared lock until identity-chec
   await competitor.acquire(lock, nextJobId);
   await competitor.release(lock, nextJobId);
 });
+
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const terminalViewStates = new Set(['completed', 'blocked', 'failed', 'cancelled', 'timed_out', 'interrupted', 'incomplete']);
+
+// A local fake CLI fixture: it answers the real preflight probes and speaks
+// enough ACP to hold a worker slot. It is not a Devin backend, keeps no model,
+// and never answers session/prompt; the held request simply occupies a slot.
+async function fakeCli(t, directory) {
+  const script = path.join(directory, 'fake-devin-worker.mjs');
+  await fs.writeFile(script, `import readline from 'node:readline';
+const args = process.argv.slice(2);
+if (args[0] === '--version') { process.stdout.write(${JSON.stringify('devin-fixture 0.0.0\n')}); process.exit(0); }
+if (args[0] === 'auth') { process.stdout.write(${JSON.stringify('logged in as fixture@example.invalid\n')}); process.exit(0); }
+if (args[0] === 'models') {
+  process.stdout.write(JSON.stringify({ families: [{ variants: [
+    { model_uid: 'swe-2-medium', label: 'Fixture medium' },
+    { model_uid: 'swe-2-high', label: 'Fixture high' },
+    { model_uid: 'swe-2-max', label: 'Fixture max' }] }] }) + ${JSON.stringify('\n')});
+  process.exit(0);
+}
+if (args[0] !== 'acp') process.exit(2);
+const model = args[args.indexOf('--model') + 1] || 'swe-2-medium';
+const send = value => process.stdout.write(JSON.stringify(value) + ${JSON.stringify('\n')});
+const held = new Map();
+let sessions = 0;
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  let message;
+  try { message = JSON.parse(line); } catch { return; }
+  if (message?.method === 'session/cancel') {
+    for (const id of held.values()) send({ jsonrpc: '2.0', id, result: { stopReason: 'cancelled' } });
+    held.clear();
+    return;
+  }
+  if (typeof message?.id !== 'number' && typeof message?.id !== 'string') return;
+  const respond = result => send({ jsonrpc: '2.0', id: message.id, result });
+  if (message.method === 'initialize') respond({ protocolVersion: 1, agentCapabilities: { promptCapabilities: {} } });
+  else if (message.method === 'session/new') respond({ sessionId: 'fixture-session-' + ++sessions,
+    configOptions: [{ id: 'model', category: 'model', currentValue: model }] });
+  else if (message.method === 'session/set_config_option') respond({ configOptions: [
+    { id: 'mode', category: 'mode', currentValue: message.params?.value },
+    { id: 'model', category: 'model', currentValue: model }] });
+  else if (message.method === 'session/prompt') held.set(message.params?.sessionId, message.id);
+  else send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Fixture method unsupported.' } });
+});
+`, { mode: 0o600 });
+  const cli = path.join(directory, 'fake-devin');
+  await fs.writeFile(cli, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`, { mode: 0o700 });
+  const previous = process.env.DEVIN_CLI_PATH;
+  process.env.DEVIN_CLI_PATH = cli;
+  t.after(() => {
+    if (process.env.DEVIN_CLI_PATH !== cli) return;
+    if (previous === undefined) delete process.env.DEVIN_CLI_PATH;
+    else process.env.DEVIN_CLI_PATH = previous;
+  });
+  return cli;
+}
+
+async function checkout(directory, name) {
+  const cwd = path.join(directory, name);
+  await fs.mkdir(cwd);
+  const git = args => exec('git', args, { cwd, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } });
+  await git(['init', '--quiet']);
+  await git(['-c', 'user.name=Bridge fixture', '-c', 'user.email=fixture@example.invalid',
+    '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '--allow-empty', '-m', 'fixture baseline']);
+  return { cwd, head: (await git(['rev-parse', 'HEAD'])).stdout.trim() };
+}
+
+function runRead(manager, source, task) {
+  return manager.run({ task, cwd: source.cwd, profile: 'read', assignment_id: randomUUID(), revision: 1,
+    base_sha: source.head, workspace_trust: 'acknowledged', trust_reason: 'Disposable local regression fixture.' });
+}
+
+async function running(manager, job_id) {
+  const until = Date.now() + 10000;
+  for (;;) {
+    const view = await manager.wait({ job_id, wait_seconds: 0 });
+    if (view.state === 'running' && view.prompt_attempted === true) return view;
+    assert.equal(terminalViewStates.has(view.state), false, `fixture job ended early: ${view.state} ${view.error?.code ?? ''}`);
+    assert.ok(Date.now() < until, `fixture job ${job_id} did not reach running`);
+    await pause(25);
+  }
+}
+
+test('four shared slots admit four jobs across managers, refuse a fifth before inference, and recycle a released slot', { ...posix, timeout: 30000 }, async t => {
+  const environment = await fixture(t);
+  await fakeCli(t, environment.directory);
+  const first = new SessionManager({ root: environment.root });
+  const second = new SessionManager({ root: environment.root });
+  try {
+    assert.equal(first.describe().max_external_workers, 4);
+    assert.equal(second.describe().max_external_workers, 4);
+
+    const held = [];
+    for (const [manager, name] of [[first, 'checkout-a'], [second, 'checkout-b'], [first, 'checkout-c'], [second, 'checkout-d']]) {
+      const source = await checkout(environment.directory, name);
+      const view = await runRead(manager, source, `Hold fixture slot in ${name}.`);
+      const live = await running(manager, view.job_id);
+      held.push({ manager, source, view, live });
+    }
+    assert.deepEqual(new Set(held.map(item => item.live.slot)), new Set([0, 1, 2, 3]));
+    for (const item of held) {
+      assert.equal(item.live.prompt_attempted, true);
+      assert.match(item.live.session_id, /^fixture-session-/);
+    }
+    const slotOwners = [];
+    for (let i = 0; i < 4; i++) {
+      slotOwners.push(JSON.parse(await fs.readFile(path.join(environment.root, 'slots', String(i), 'owner.json'), 'utf8')).job_id);
+    }
+    assert.deepEqual(new Set(slotOwners), new Set(held.map(item => item.view.job_id)));
+
+    const fifth = await runRead(second, await checkout(environment.directory, 'checkout-e'), 'Needs a fifth slot.');
+    assert.equal(fifth.state, 'blocked');
+    assert.equal(fifth.error.code, 'WORKER_CAPACITY');
+    assert.equal(fifth.preflight.ready, true);
+    assert.equal(fifth.prompt_attempted, false);
+    assert.equal(fifth.session_id, null);
+    assert.equal(fifth.resolved_model, null);
+    assert.equal(fifth.outcome.execution.status, 'not_started');
+    const refusedRecord = await second.load(fifth.job_id);
+    assert.equal(refusedRecord.pid, null);
+    assert.equal(refusedRecord.slot, undefined);
+    assert.deepEqual((await fs.readdir(path.join(environment.root, 'slots'))).sort(), ['0', '1', '2', '3']);
+
+    const duplicate = await runRead(first, held[0].source, 'Second job on a held checkout.');
+    assert.equal(duplicate.state, 'blocked');
+    assert.equal(duplicate.error.code, 'WORKSPACE_BUSY');
+    assert.equal(duplicate.preflight.ready, true);
+    assert.equal(duplicate.prompt_attempted, false);
+
+    const freed = held[0].live.slot;
+    const cancelled = await first.cancel(held[0].view.job_id);
+    assert.equal(cancelled.state, 'cancelled');
+    await assert.rejects(fs.access(path.join(environment.root, 'slots', String(freed))), { code: 'ENOENT' });
+    const checkoutLock = path.join(environment.root, 'locks', createHash('sha256').update(await fs.realpath(held[0].source.cwd)).digest('hex'));
+    await assert.rejects(fs.access(checkoutLock), { code: 'ENOENT' });
+    const reusedLive = await running(first, (await runRead(first, await checkout(environment.directory, 'checkout-f'), 'Reuse the released slot.')).job_id);
+    assert.equal(reusedLive.slot, freed);
+    assert.equal(reusedLive.prompt_attempted, true);
+  } finally {
+    await Promise.allSettled([first.close(), second.close()]);
+  }
+});
+
+test('worker capacity defaults to four, allows one through four, and fails closed outside that range', { ...posix, timeout: 30000 }, async t => {
+  const environment = await fixture(t);
+  await fakeCli(t, environment.directory);
+  const managers = [];
+  const open = options => {
+    const manager = new SessionManager({ root: environment.root, ...options });
+    managers.push(manager);
+    return manager;
+  };
+  try {
+    for (const value of [1, 2, 3, 4]) {
+      const manager = open({ maxWorkers: value });
+      assert.equal(manager.maxWorkers, value);
+      assert.equal(manager.describe().max_external_workers, value);
+    }
+    assert.equal(open({}).maxWorkers, 4);
+    for (const value of [0, 5, -1, 1.5, '5', 'unlimited']) {
+      assert.throws(() => open({ maxWorkers: value }), { code: 'INVALID_CAPACITY' }, `capacity ${value}`);
+    }
+    const previousWorkers = process.env.DEVIN_BRIDGE_MAX_WORKERS;
+    try {
+      process.env.DEVIN_BRIDGE_MAX_WORKERS = '5';
+      assert.throws(() => new SessionManager({ root: environment.root }), { code: 'INVALID_CAPACITY' });
+      process.env.DEVIN_BRIDGE_MAX_WORKERS = '4';
+      assert.equal(new SessionManager({ root: environment.root }).maxWorkers, 4);
+    } finally {
+      if (previousWorkers === undefined) delete process.env.DEVIN_BRIDGE_MAX_WORKERS;
+      else process.env.DEVIN_BRIDGE_MAX_WORKERS = previousWorkers;
+    }
+
+    const limited = open({ maxWorkers: 2 });
+    const holders = [randomUUID(), randomUUID()];
+    await fs.mkdir(path.join(environment.root, 'slots'), { recursive: true });
+    for (const [i, holder] of holders.entries()) {
+      await limited.locker.acquire(path.join(environment.root, 'slots', String(i)), holder);
+    }
+    const refused = await runRead(limited, await checkout(environment.directory, 'limited-checkout'), 'Needs a slot beyond the configured limit.');
+    assert.equal(refused.state, 'blocked');
+    assert.equal(refused.error.code, 'WORKER_CAPACITY');
+    assert.equal(refused.preflight.ready, true);
+    assert.equal(refused.prompt_attempted, false);
+    for (const [i, holder] of holders.entries()) {
+      await limited.locker.release(path.join(environment.root, 'slots', String(i)), holder);
+    }
+  } finally {
+    await Promise.allSettled(managers.map(manager => manager.close()));
+  }
+});
